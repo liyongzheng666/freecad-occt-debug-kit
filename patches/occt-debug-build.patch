@@ -1,0 +1,31 @@
+diff --git a/adm/cmake/occt_defs_flags.cmake b/adm/cmake/occt_defs_flags.cmake
+index 3d989abc..f13e2bbc 100644
+--- a/adm/cmake/occt_defs_flags.cmake
++++ b/adm/cmake/occt_defs_flags.cmake
+@@ -167,8 +167,11 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "[Cc][Ll][Aa][Nn][Gg]")
+     # CLang can be used with both libstdc++ and libc++, however on OS X libstdc++ is outdated.
+     set (CMAKE_CXX_FLAGS "-stdlib=libc++ ${CMAKE_CXX_FLAGS}")
+   endif()
+-  # Optimize size of binaries
+-  set (CMAKE_SHARED_LINKER_FLAGS "-Wl,-s ${CMAKE_SHARED_LINKER_FLAGS}")
++  # Optimize size of binaries (but keep the debug map in Debug builds so LLDB can
++  # resolve OCCT source lines / bind breakpoints; -Wl,-s strips it otherwise).
++  if (NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
++    set (CMAKE_SHARED_LINKER_FLAGS "-Wl,-s ${CMAKE_SHARED_LINKER_FLAGS}")
++  endif()
+ elseif(MINGW)
+   add_definitions(-D_WIN32_WINNT=0x0601)
+   # _WIN32_WINNT=0x0601 (use Windows 7 SDK)
+diff --git a/src/StdPrs/StdPrs_BRepFont.cxx b/src/StdPrs/StdPrs_BRepFont.cxx
+index ab2d9b3c..749f7cd2 100644
+--- a/src/StdPrs/StdPrs_BRepFont.cxx
++++ b/src/StdPrs/StdPrs_BRepFont.cxx
+@@ -457,7 +457,7 @@ Standard_Boolean StdPrs_BRepFont::renderGlyph (const Standard_Utf32Char theChar,
+   for (short aContour = 0, aStartIndex = 0; aContour < anOutline->n_contours; ++aContour)
+   {
+     const FT_Vector* aPntList = &anOutline->points[aStartIndex];
+-    const char* aTags      = &anOutline->tags[aStartIndex];
++    const char* aTags      = (const char*)&anOutline->tags[aStartIndex];
+     const short anEndIndex = anOutline->contours[aContour];
+     const short aPntsNb    = (anEndIndex - aStartIndex) + 1;
+     aStartIndex = anEndIndex + 1;

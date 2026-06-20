@@ -1,0 +1,53 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "local-occt-macos-debug",
+      "displayName": "Local OCCT Debug",
+      "description": "Debug FreeCAD against the sibling OCCT debug installation",
+      "inherits": "conda-macos-debug",
+      "cacheVariables": {
+        "OCC_INCLUDE_DIR": {
+          "type": "FILEPATH",
+          "value": "${sourceParentDir}/occt/install/debug/include/opencascade"
+        },
+        "OCC_LIBRARY_DIR": {
+          "type": "FILEPATH",
+          "value": "${sourceParentDir}/occt/install/debug/lib"
+        },
+        "OCC_LIBRARY": {
+          "type": "FILEPATH",
+          "value": "${sourceParentDir}/occt/install/debug/lib/libTKernel.dylib"
+        },
+        "OpenCASCADE_DIR": {
+          "type": "FILEPATH",
+          "value": "${sourceParentDir}/occt/install/debug/lib/cmake/opencascade"
+        },
+        "OpenCASCADE_INCLUDE_DIR": {
+          "type": "FILEPATH",
+          "value": "${sourceParentDir}/occt/install/debug/include/opencascade"
+        },
+        "OpenCASCADE_LIBRARY_DIR": {
+          "type": "FILEPATH",
+          "value": "${sourceParentDir}/occt/install/debug/lib"
+        },
+        "CMAKE_BUILD_RPATH": {
+          "type": "STRING",
+          "value": "${sourceParentDir}/occt/install/debug/lib;${sourceDir}/.pixi/envs/default/lib"
+        },
+        "CMAKE_EXE_LINKER_FLAGS": {
+          "type": "STRING",
+          "value": "-L${sourceParentDir}/occt/install/debug/lib -Wl,-headerpad_max_install_names -Wl,-dead_strip_dylibs -L${sourceDir}/.pixi/envs/default/lib"
+        },
+        "CMAKE_MODULE_LINKER_FLAGS": {
+          "type": "STRING",
+          "value": "-L${sourceParentDir}/occt/install/debug/lib -Wl,-headerpad_max_install_names -Wl,-dead_strip_dylibs -L${sourceDir}/.pixi/envs/default/lib"
+        },
+        "CMAKE_SHARED_LINKER_FLAGS": {
+          "type": "STRING",
+          "value": "-L${sourceParentDir}/occt/install/debug/lib -Wl,-headerpad_max_install_names -Wl,-dead_strip_dylibs -L${sourceDir}/.pixi/envs/default/lib"
+        }
+      }
+    }
+  ]
+}
