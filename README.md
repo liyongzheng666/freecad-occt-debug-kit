@@ -19,43 +19,53 @@ This means **a fresh clone of this repository does not contain the FreeCAD or OC
 
 ## Bootstrap from a fresh clone
 
-Run on macOS Apple Silicon. Prerequisites: `git`, [`pixi`](https://pixi.sh) (provides the locked Clang/CMake/Qt toolchain), and the Xcode Command Line Tools. The directory layout matters: OCCT must be cloned into `occt/` and FreeCAD into `FreeCAD/`, as siblings, because the CMake preset references the OCCT install via `${sourceParentDir}/occt/install/debug`.
+A clone of this kit contains only the configuration layer. One command turns it into a buildable, debuggable environment:
 
 ```bash
-# 1. Clone this kit; the outer directory name becomes the workspace root.
 git clone https://github.com/liyongzheng666/freecad-occt-debug-kit.git freecad
 cd freecad
+scripts/bootstrap.sh            # clone pinned sources, patch, build OCCT + FreeCAD, verify
+```
 
-# 2. OCCT 7.8.1 source, then re-apply the local debug/build edits.
-git clone --branch V7_8_1 https://github.com/Open-Cascade-SAS/OCCT.git occt
+Prerequisites (macOS Apple Silicon): `git`, [`pixi`](https://pixi.sh) (provides the locked Clang/CMake/Qt toolchain), and the Xcode Command Line Tools. `scripts/bootstrap.sh` is **idempotent** — re-running skips any step already completed, so it also serves as a repair entry point. Pass a job count to override the default `-j 8`, e.g. `scripts/bootstrap.sh 12`.
+
+The directory layout matters: OCCT lives in `occt/` and FreeCAD in `FreeCAD/`, as siblings, because the CMake preset references the OCCT install via `${sourceParentDir}/occt/install/debug`.
+
+### What the script does, equivalently by hand
+
+```bash
+# 1. OCCT 7.8.1 source, then re-apply the local debug/build edits.
+git clone --depth 1 --branch V7_8_1 https://github.com/Open-Cascade-SAS/OCCT.git occt
 git -C occt apply ../patches/occt-debug-build.patch
 
-# 3. FreeCAD source baseline. This is upstream only — the local FreeCAD
-#    integration/agent changes are NOT part of this kit and stay on your fork.
-git clone --branch weekly-2026.05.06 https://github.com/FreeCAD/FreeCAD.git FreeCAD
+# 2. FreeCAD source pinned to the exact commit this kit was captured against.
+git clone --filter=blob:none https://github.com/FreeCAD/FreeCAD.git FreeCAD
+git -C FreeCAD checkout 2b7e9a6896bc9b5dc4555c2f6faa9adc0a7caf47
 
-# 4. Restore the local-only CMake preset (FreeCAD's own .gitignore drops it).
+# 3. Restore the files that belong inside FreeCAD/ but are not in FreeCAD's git:
+#    the local-only CMake preset (dropped by FreeCAD's own .gitignore) and the
+#    toponaming reference note.
 cp templates/CMakeUserPresets.json FreeCAD/CMakeUserPresets.json
+cp templates/TOPONAMING.md         FreeCAD/src/Mod/Part/App/TOPONAMING.md
 
-# 5. Materialize the locked Pixi toolchain (Clang 18, CMake, Ninja, Qt, ...).
-cd FreeCAD && pixi install --frozen && cd ..
+# 4. Materialize the locked Pixi toolchain (Clang 18, CMake, Ninja, Qt, ...).
+( cd FreeCAD && pixi install --frozen )
 
-# 6. Build OCCT (debug + install), then FreeCAD against that local OCCT.
+# 5. Build OCCT (debug + install), then FreeCAD against that local OCCT.
 scripts/configure-occt.sh
 scripts/rebuild-occ.sh
-cd FreeCAD
-pixi run --frozen -- cmake --preset local-occt-macos-debug
-pixi run --frozen -- cmake --build build/debug -j 8
-cd ..
+( cd FreeCAD
+  pixi run --frozen -- cmake --preset local-occt-macos-debug
+  pixi run --frozen -- cmake --build build/debug -j 8 )
 
-# 7. Verify the toolchain, indexing, and runtime library resolution.
+# 6. Verify the toolchain, indexing, and runtime library resolution.
 scripts/workspace-doctor.sh --runtime
 ```
 
 Notes:
 
 - `patches/occt-debug-build.patch` carries two edits against `V7_8_1`: keeping the debug map in Debug builds so LLDB can bind breakpoints (otherwise `-Wl,-s` strips it), and a FreeType `tags` cast that Clang 18 requires. A `reset`/`checkout`/`pull` of `occt/` reverts the first edit — re-apply if breakpoints regress. See the troubleshooting table in [docs/occt-debugging.md](docs/occt-debugging.md).
-- The FreeCAD `weekly-2026.05.06` tag is the nearest published anchor; the environment is reproduced from it, not the in-progress local branch.
+- FreeCAD is pinned to commit `2b7e9a6896b` (an ancestor of `FreeCAD/main`), so the source reproduces exactly. The kit does not carry any FreeCAD source changes — that commit is vanilla upstream; the only restored file is the `TOPONAMING.md` reference note.
 - After the build, open the workspace with `code .` and continue from [Start here](#start-here).
 
 ## Start here
@@ -75,6 +85,7 @@ Install the extensions recommended by `.vscode/extensions.json`. Clangd then use
 ## Common commands
 
 ```bash
+scripts/bootstrap.sh                         # one-click: clone sources + build everything (see below)
 scripts/configure-occt.sh                    # configure OCCT and generate its CDB
 scripts/rebuild-occ.sh                       # incrementally build + install OCCT
 scripts/fc-cmd.sh scripts/debug_target.py    # run the geometry smoke scenario
