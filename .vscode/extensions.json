@@ -1,0 +1,10 @@
+{
+  "recommendations": [
+    "llvm-vs-code-extensions.vscode-clangd",
+    "vadimcn.vscode-lldb",
+    "ms-vscode.cmake-tools",
+    "loukas-kotas.breakpoints-manager",
+    "hediet.debug-visualizer"
+  ]
+}
+

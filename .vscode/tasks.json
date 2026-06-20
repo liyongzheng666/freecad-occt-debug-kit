@@ -1,0 +1,106 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "OCCT: configure debug",
+      "type": "shell",
+      "command": "${workspaceFolder}/scripts/configure-occt.sh",
+      "problemMatcher": ["$gcc"],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    },
+    {
+      "label": "OCCT: build + install debug",
+      "type": "shell",
+      "command": "${workspaceFolder}/scripts/rebuild-occ.sh",
+      "problemMatcher": ["$gcc"],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    },
+    {
+      "label": "FreeCAD: configure local OCCT debug",
+      "type": "shell",
+      "command": "pixi",
+      "args": [
+        "run",
+        "--frozen",
+        "--",
+        "cmake",
+        "--preset",
+        "local-occt-macos-debug"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}/FreeCAD"
+      },
+      "problemMatcher": ["$gcc"],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    },
+    {
+      "label": "FreeCAD: build debug",
+      "type": "shell",
+      "command": "pixi",
+      "args": [
+        "run",
+        "--frozen",
+        "--",
+        "cmake",
+        "--build",
+        "build/debug",
+        "-j",
+        "8"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}/FreeCAD"
+      },
+      "problemMatcher": ["$gcc"],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    },
+    {
+      "label": "Workspace: configure debug",
+      "dependsOn": [
+        "OCCT: configure debug",
+        "FreeCAD: configure local OCCT debug"
+      ],
+      "dependsOrder": "sequence",
+      "problemMatcher": []
+    },
+    {
+      "label": "Debug: sync local toolchain",
+      "dependsOn": [
+        "OCCT: build + install debug",
+        "FreeCAD: build debug"
+      ],
+      "dependsOrder": "sequence",
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "Workspace: doctor",
+      "type": "shell",
+      "command": "${workspaceFolder}/scripts/workspace-doctor.sh",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    }
+  ]
+}

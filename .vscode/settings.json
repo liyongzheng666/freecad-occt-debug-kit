@@ -1,0 +1,40 @@
+{
+  "clangd.path": "/usr/bin/clangd",
+  "clangd.arguments": [
+    "--background-index",
+    "--header-insertion=never",
+    "--completion-style=detailed",
+    "--all-scopes-completion",
+    "--pch-storage=memory",
+    "--query-driver=${workspaceFolder}/FreeCAD/.pixi/envs/default/bin/*clang*",
+    "-j=8"
+  ],
+  "clangd.onConfigChanged": "restart",
+  "C_Cpp.intelliSenseEngine": "disabled",
+
+  "cmake.configureOnOpen": false,
+  "cmake.sourceDirectory": "${workspaceFolder}/FreeCAD",
+  "cmake.buildDirectory": "${workspaceFolder}/FreeCAD/build/debug",
+
+  "files.watcherExclude": {
+    "**/.git/**": true,
+    "**/FreeCAD/.pixi/**": true,
+    "**/FreeCAD/build/**": true,
+    "**/occt/build/**": true,
+    "**/occt/install/**": true
+  },
+  "search.exclude": {
+    "**/FreeCAD/.pixi/**": true,
+    "**/FreeCAD/build/**": true,
+    "**/occt/build/**": true,
+    "**/occt/install/**": true
+  },
+
+  "git.autoRepositoryDetection": "subFolders",
+  "git.repositoryScanMaxDepth": 2,
+
+  "debug.inlineValues": "on",
+  "debug.showInStatusBar": "always",
+  "debug.showVariableTypes": true,
+  "debug.openDebug": "openOnDebugBreak"
+}

@@ -1,0 +1,91 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "FreeCAD GUI · local OCCT · build first",
+      "program": "${workspaceFolder}/FreeCAD/build/debug/bin/FreeCAD",
+      "args": [],
+      "cwd": "${workspaceFolder}/FreeCAD",
+      "preLaunchTask": "Debug: sync local toolchain",
+      "terminal": "integrated",
+      "initCommands": [
+        "settings set target.process.thread.step-in-avoid-nodebug true",
+        "settings set target.process.thread.step-avoid-regexp ^(std::|boost::|Py|_Py|Qt|q_|__cxx|__cxa|__gnu|operator new|operator delete|memcpy|memset|memmove)",
+        "command script import ${workspaceFolder}/scripts/lldb_occt_formatters.py",
+        "command script import ${workspaceFolder}/FreeCAD/contrib/debugger/qt_pretty_printers_lldb.py"
+      ],
+      "env": {
+        "DYLD_LIBRARY_PATH": "${workspaceFolder}/occt/install/debug/lib:${env:DYLD_LIBRARY_PATH}"
+      }
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "FreeCADCmd · current Python file · build first",
+      "program": "${workspaceFolder}/FreeCAD/build/debug/bin/FreeCADCmd",
+      "args": ["${file}"],
+      "cwd": "${workspaceFolder}/FreeCAD",
+      "preLaunchTask": "Debug: sync local toolchain",
+      "terminal": "integrated",
+      "initCommands": [
+        "settings set target.process.thread.step-in-avoid-nodebug true",
+        "settings set target.process.thread.step-avoid-regexp ^(std::|boost::|Py|_Py|Qt|q_|__cxx|__cxa|__gnu|operator new|operator delete|memcpy|memset|memmove)",
+        "command script import ${workspaceFolder}/scripts/lldb_occt_formatters.py",
+        "command script import ${workspaceFolder}/FreeCAD/contrib/debugger/qt_pretty_printers_lldb.py"
+      ],
+      "env": {
+        "DYLD_LIBRARY_PATH": "${workspaceFolder}/occt/install/debug/lib:${env:DYLD_LIBRARY_PATH}"
+      }
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "FreeCADCmd · debug_target.py · build first",
+      "program": "${workspaceFolder}/FreeCAD/build/debug/bin/FreeCADCmd",
+      "args": ["${workspaceFolder}/scripts/debug_target.py"],
+      "cwd": "${workspaceFolder}/FreeCAD",
+      "preLaunchTask": "Debug: sync local toolchain",
+      "terminal": "integrated",
+      "initCommands": [
+        "settings set target.process.thread.step-in-avoid-nodebug true",
+        "settings set target.process.thread.step-avoid-regexp ^(std::|boost::|Py|_Py|Qt|q_|__cxx|__cxa|__gnu|operator new|operator delete|memcpy|memset|memmove)",
+        "command script import ${workspaceFolder}/scripts/lldb_occt_formatters.py",
+        "command script import ${workspaceFolder}/FreeCAD/contrib/debugger/qt_pretty_printers_lldb.py"
+      ],
+      "env": {
+        "DYLD_LIBRARY_PATH": "${workspaceFolder}/occt/install/debug/lib:${env:DYLD_LIBRARY_PATH}"
+      }
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "FreeCADCmd · debug_target.py · skip build",
+      "program": "${workspaceFolder}/FreeCAD/build/debug/bin/FreeCADCmd",
+      "args": ["${workspaceFolder}/scripts/debug_target.py"],
+      "cwd": "${workspaceFolder}/FreeCAD",
+      "terminal": "integrated",
+      "initCommands": [
+        "settings set target.process.thread.step-in-avoid-nodebug true",
+        "settings set target.process.thread.step-avoid-regexp ^(std::|boost::|Py|_Py|Qt|q_|__cxx|__cxa|__gnu|operator new|operator delete|memcpy|memset|memmove)",
+        "command script import ${workspaceFolder}/scripts/lldb_occt_formatters.py",
+        "command script import ${workspaceFolder}/FreeCAD/contrib/debugger/qt_pretty_printers_lldb.py"
+      ],
+      "env": {
+        "DYLD_LIBRARY_PATH": "${workspaceFolder}/occt/install/debug/lib:${env:DYLD_LIBRARY_PATH}"
+      }
+    },
+    {
+      "type": "lldb",
+      "request": "attach",
+      "name": "Attach to running FreeCAD",
+      "program": "${workspaceFolder}/FreeCAD/build/debug/bin/FreeCAD",
+      "pid": "${command:pickProcess}",
+      "initCommands": [
+        "command script import ${workspaceFolder}/scripts/lldb_occt_formatters.py",
+        "command script import ${workspaceFolder}/FreeCAD/contrib/debugger/qt_pretty_printers_lldb.py"
+      ]
+    }
+  ]
+}

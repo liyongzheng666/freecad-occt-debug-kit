@@ -1,0 +1,10 @@
+If:
+  PathMatch: FreeCAD/.*
+CompileFlags:
+  CompilationDatabase: FreeCAD/build/debug
+---
+If:
+  PathMatch: occt/.*
+CompileFlags:
+  CompilationDatabase: occt/build/debug
+

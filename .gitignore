@@ -1,0 +1,13 @@
+# Independent source repositories managed by their own Git histories.
+/FreeCAD/
+/occt/
+
+# Local agent/runtime state and user artifacts.
+/.omx/
+/myFold/
+
+# Generated caches.
+**/__pycache__/
+*.pyc
+.DS_Store
+
