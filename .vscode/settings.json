@@ -36,5 +36,13 @@
   "debug.inlineValues": "on",
   "debug.showInStatusBar": "always",
   "debug.showVariableTypes": true,
-  "debug.openDebug": "openOnDebugBreak"
+  "debug.openDebug": "openOnDebugBreak",
+
+  "debugVisualizer.useChromeKioskMode": false,
+  "debugVisualizer.debugAdapterConfigurations": {
+    "lldb": {
+      "context": "watch",
+      "expressionTemplate": "/nat ({struct __dv_payload;static char _b[65536];__builtin_memset(_b,0,65536);FILE*_f=(FILE*)fopen(\"/tmp/occ_dv_${expr}.json\",\"r\");if(_f){(long)fread(_b,1,65535,_f);(int)fclose(_f);}else{__builtin_strcpy(_b,\"{\\\"kind\\\":{\\\"text\\\":true},\\\"text\\\":\\\"run occ_viz_shape_pts ${expr} in debug console first\\\"}\");}  (struct __dv_payload*)_b;})"
+    }
+  }
 }
