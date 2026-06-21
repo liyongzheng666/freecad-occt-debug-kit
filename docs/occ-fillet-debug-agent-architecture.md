@@ -190,6 +190,8 @@ Print/
 
 Print 负责事件和 Session 协议、Session 监听、SSE 推送、3D/UV Viewer、分组、搜索、高亮、定位、拾取、示例数据和协议兼容测试。
 
+Viewer 前端技术栈固定为 **TypeScript + Vite + React + Zustand + 原生 Three.js**。React 只负责中文界面和面板组合，Three.js 由独立 `SceneController` 管理；不引入 React Three Fiber，避免让几何渲染生命周期被 UI 框架隐藏。
+
 Print 不负责 FreeCAD/OCCT 构建、ChFi3d 埋点、FCStd 重计算策略或修改 OCCT 源码。
 
 ### 7.2 freecad-occt-debug-kit 仓库
@@ -566,7 +568,64 @@ BREP 是权威资产，Mesh 放在 `derived/` 下，可随时删除重建。
 
 ## 18. Viewer 设计
 
-主 3D 视图从 Canvas 自定义投影迁移到 Three.js。Mesh 使用深度缓冲和透明度，BufferGeometry 表达点、线和三角面，Raycaster 进行对象拾取。当前 Canvas 2D UV 逻辑可继续复用或重写为独立 UV pane，但不再承担 3D Shape 渲染。
+### 18.1 产品定位和技术栈
+
+Viewer 同时服务于 Agent 实时输出、人类开发者主动调研，以及 Agent 无法确定问题时的人工兜底。它不是另一个 FreeCAD，也不是仅供 Agent 消费的日志终端。
+
+主 3D 视图从 Canvas 自定义投影迁移到原生 Three.js。Mesh 使用深度缓冲和透明度，BufferGeometry 表达点、线和三角面，Raycaster 进行对象拾取。React 负责工具栏、对象树、属性检查器和 UV 面板，Zustand 负责由增量事件驱动的 Scene Store。当前 Canvas 2D UV 逻辑可改造为按需打开的独立 UV pane，但不再承担 3D Shape 渲染。
+
+第一版 UI 使用中文；协议字段、TypeScript 类型、源码标识和 JSON 属性保持英文。
+
+推荐源码边界：
+
+```text
+viewer/src/
+├── core/
+│   ├── protocol/           # 事件类型与校验
+│   ├── scene-store/        # 纯 reducer + Zustand adapter
+│   └── session/
+├── rendering/
+│   ├── SceneController.ts
+│   ├── RendererRegistry.ts
+│   └── renderers/
+├── features/
+│   ├── layers/
+│   ├── inspector/
+│   ├── uv-viewer/
+│   ├── search/
+│   └── run-compare/
+└── legacy/
+    └── CgEdgeExportAdapter.ts
+```
+
+新增几何类型必须通过 Renderer Registry 注册，不能在主 Viewport 中不断扩展 `switch(kind)`。
+
+### 18.2 界面布局
+
+```text
+┌──────────────── Session / 状态 / 搜索 / 3D·UV / X-Ray ────────────────┐
+│ FreeCAD/分组树 │                    3D 主视图             │ 属性检查器 │
+│ baseline 🔒    │                                          │ 几何/拓扑 │
+│ Body / Pad     │                                          │ FreeCAD   │
+│ Stripe / Error │                                          │ 源码位置  │
+├────────────────┴──────────────────────────────────────────┴───────────┤
+│ 按需展开的 UV 视图 / 运行日志 / 错误摘要                              │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+- 3D 是默认主视图，UV 默认关闭，通过按钮开启或关闭。
+- 左侧只显示适度简化的 FreeCAD 对象层级和调试分组，不复刻完整 FreeCAD 特征编辑器。
+- 右侧检查器展示完整调试属性：ID、几何类型、参数范围、Orientation、Location、Tolerance、FreeCAD element、OCCT 类型和源码位置。
+- 页面运行于 localhost 浏览器；MVP 不做 Electron、FreeCAD 内嵌面板或 VS Code 专用 WebView。
+- UI 采用高信息密度的工程调试器布局，面板可折叠，不使用卡片式 Dashboard。
+
+### 18.3 场景规模和扩展策略
+
+MVP 按每次几百到几千对象的中等规模设计：点集和同组线条尽量合并为 BufferGeometry；对象树使用虚拟滚动；标签默认只显示选中对象和重点对象；拾取按可见层和类型过滤。
+
+旧 Print 仓库继续复用，但采用“保留仓库、替换核心”的迁移方式：保留测试数据、UV/3D 联动思路、搜索、高亮和标签策略；替换 Canvas 3D Renderer、`parseModel()`、`setModel()` 全量状态和重复的 `app.js`。旧 `cg_edge_export` 通过兼容适配器导入，不再作为新协议扩展基础。
+
+### 18.4 场景层级
 
 场景层级：
 
@@ -596,6 +655,12 @@ Scene
 - Normal/X-Ray 切换。
 - 线宽、点大小和标签切换。
 - 3D 与 UV 跨视图选中同步。
+
+分组节点支持显示/隐藏、Solo、锁定、清空、透明度、Normal/X-Ray 和定位包围盒。MVP 不提供任意创建、重命名和拖动分组；分组语义由 Agent/埋点协议产生。
+
+Viewer 到 Agent 的反向控制不进入 MVP。第一版只提供复制对象 ID、复制 JSON、复制 `file:line` 和定位源码信息；后续再通过独立 command API 增加双向控制。
+
+新 Run 默认清除旧调试对象并保留 baseline。用户可固定一个 Run，与下一次运行进行最多双 Run 对比；这仍不等价于完整时间轴。
 
 默认不修改真实几何坐标来错开重合边。使用颜色、虚线、描边和闪烁区分；另提供明确标记的 `visual separation` 模式，偏移只属于样式，不写回权威几何。
 
