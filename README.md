@@ -107,6 +107,8 @@ Generated directories are intentionally excluded from ordinary VS Code search an
 
 ## Documentation
 
+- [docs/occ-fillet-debug-agent-architecture.md](docs/occ-fillet-debug-agent-architecture.md) - architecture and implementation plan for the incremental FreeCAD/OCCT fillet-debugging agent and geometry viewer.
+
 - [docs/vscode-build-and-pixi.md](docs/vscode-build-and-pixi.md) — how the VS Code build/link pipeline and Pixi fit together (beginner-friendly intro to Pixi and CMake).
 - [docs/occt-debugging.md](docs/occt-debugging.md) — the debugging workflow and troubleshooting guide.
 - [docs/vscode-debug-breakpoints.md](docs/vscode-debug-breakpoints.md) — breakpoint setup and tips.
