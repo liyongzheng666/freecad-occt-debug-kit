@@ -1,6 +1,8 @@
 # Independent source repositories managed by their own Git histories.
+# Pinned and cloned by scripts/bootstrap.sh (see PRINT_SHA there).
 /FreeCAD/
 /occt/
+/tools/Print/
 
 # Local agent/runtime state and user artifacts.
 /.omx/

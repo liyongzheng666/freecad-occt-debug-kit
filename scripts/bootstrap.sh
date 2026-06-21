@@ -3,10 +3,10 @@
 # One-click bootstrap: materialize a buildable + debuggable FreeCAD/OCCT
 # environment from a fresh clone of this configuration kit.
 #
-# This kit ignores the FreeCAD/ and occt/ source trees, so a clone only
-# carries config, scripts, docs, templates, and patches. This script pins
-# and clones the matching sources, re-applies the local edits that live
-# inside those ignored trees, builds both, and verifies the result.
+# This kit ignores the FreeCAD/, occt/, and tools/Print/ source trees, so a
+# clone only carries config, scripts, docs, templates, and patches. This
+# script pins and clones the matching sources, re-applies the local edits that
+# live inside those ignored trees, builds both, and verifies the result.
 #
 # Idempotent: re-running skips any step already completed, so it also
 # doubles as a repair entry point.
@@ -20,6 +20,8 @@ OCCT_URL="https://github.com/Open-Cascade-SAS/OCCT.git"
 OCCT_REF="V7_8_1"
 FREECAD_URL="https://github.com/FreeCAD/FreeCAD.git"
 FREECAD_SHA="2b7e9a6896bc9b5dc4555c2f6faa9adc0a7caf47"   # ancestor of FreeCAD/main
+PRINT_URL="https://github.com/liyongzheng666/Print.git"
+PRINT_SHA="b69d0d19f9c756f756cf7805795b7f3c8c5e7180"     # pinned Print viewer/bridge revision
 
 JOBS="${1:-8}"
 
@@ -65,6 +67,15 @@ if [ ! -d FreeCAD/.git ]; then
   git -C FreeCAD checkout "$FREECAD_SHA"
 else
   step "FreeCAD already present — skip clone (current: $(git -C FreeCAD rev-parse --short HEAD))"
+fi
+
+# ---- 2b. Print viewer/bridge pinned to the captured commit ----------------
+if [ ! -d tools/Print/.git ]; then
+  step "Clone Print (partial) and pin to $PRINT_SHA"
+  git clone --filter=blob:none "$PRINT_URL" tools/Print
+  git -C tools/Print checkout "$PRINT_SHA"
+else
+  step "Print already present — skip clone (current: $(git -C tools/Print rev-parse --short HEAD))"
 fi
 
 # ---- 3. Restore files that live inside the ignored FreeCAD tree -----------
