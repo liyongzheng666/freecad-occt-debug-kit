@@ -76,23 +76,24 @@ Debug Visualizer 可以保留为临时查看普通变量的辅助工具，但不
 
 构建一个相对独立、但与 FreeCAD/OCCT 调试紧密连接的几何调试工具，使 Agent 能够：
 
-1. 修改或启用 OCCT 源码埋点。
-2. 自动增量编译受影响的 OCCT 模块。
+1. 在 LLDB 暂停时动态输出当前几何，不为每次观察修改源码或重新编译。
+2. 将采集命令挂到断点，供 Agent 自动观察并继续运行。
 3. 使用 FreeCADCmd 加载原始 FCStd 并复现圆角问题。
 4. 在算法运行过程中输出点、曲线、面和 BRep Shape。
 5. 将调试几何增量显示在独立 Viewer 中。
 6. 以原始 FCStd 模型作为空间对照，明确调试几何的真实位置。
 7. 按圆角阶段、Stripe 或问题类别分组、隐藏和清空对象。
 8. 将错误状态和几何数据同时提供给 Agent 分析。
+9. 对高频、极短生命周期和关键失败路径保留可选源码埋点。
 
 目标工作流：
 
 ```text
-Agent 修改/启用埋点
+一次性加载 OccDebugCapture + LLDB 命令插件
         ↓
-增量编译 OCCT（优先仅构建 TKFillet）
+FreeCADCmd/FreeCAD 在断点暂停
         ↓
-FreeCADCmd 打开 FCStd 并执行指定圆角对象
+人工命令、断点自动命令或少量源码埋点
         ↓
 埋点输出事件、BREP 和日志
         ↓
@@ -113,12 +114,15 @@ Viewer 在原始模型上叠加调试点线面
 - 支持原始模型与调试对象叠加。
 - 支持 Normal、X-Ray 和 Solo 显示模式。
 - 支持 Agent 自动编译、运行和读取结构化结果。
+- 支持 `occdbg point/curve/edge/face/shape` 动态命令。
+- 支持将采集动作挂到断点并自动继续。
 - 通过 patch 管理少量稳定 OCCT 埋点。
 - Viewer 未启动时，被调试程序仍能正常运行。
 
 ### 4.2 第一阶段明确不做
 
 - 不通过 DAP 自动控制 CodeLLDB。
+- 不要求每次观察变量都修改 OCCT 源码。
 - 不实现调试时间轴和任意时刻回放 UI。
 - 不把浏览器作为 BRep 几何内核。
 - 不在浏览器中用不同版本的 OCCT WASM 重新解释权威几何。
@@ -133,7 +137,7 @@ Session 使用追加事件并可以在重新连接后恢复当前场景，但这
 
 | 编号 | 需求 | 设计响应 | 验证方式 |
 | --- | --- | --- | --- |
-| R1 | 自动修改源码后编译运行 | Agent Runner + 增量构建脚本 | 修改 `ChFi3d` 后仅重建相关 OCCT 目标 |
+| R1 | 调试时任意输出当前几何 | LLDB 动态命令 + 一次性 Capture 动态库 | 不修改源码即可输出当前 `gp_Pnt` 和 `TopoDS_Shape` |
 | R2 | 增量插入点线面 | NDJSON 事件流 + SSE | 运行中连续出现新对象，不替换场景 |
 | R3 | 支持清空和分组 | `group`、`clear_group`、`clear_scene` | 单独清空 Stripe，不影响 baseline |
 | R4 | 原始文件空间对照 | FreeCADCmd 提取 FCStd baseline | 调试对象与原始 Shape 坐标对齐 |
@@ -148,10 +152,11 @@ Session 使用追加事件并可以在重新连接后恢复当前场景，但这
 
 ```mermaid
 flowchart LR
-    A["Agent"] -->|"编辑埋点/配置"| B["OCCT source"]
-    A -->|"执行构建"| C["Incremental Build"]
-    B --> C
+    A["Agent / Human"] -->|"LLDB command / breakpoint action"| E["LLDB Geometry Commands"]
+    A -->|"仅关键路径"| B["OCCT source probe"]
+    B --> C["Incremental Build"]
     C --> D["FreeCADCmd + local OCCT"]
+    E --> D
     F["Original FCStd"] --> D
     D --> G["C++ Capture API"]
     G --> H["Session: NDJSON + BREP + logs"]
@@ -165,7 +170,7 @@ flowchart LR
 系统分为五层：
 
 1. **复现层**：FreeCADCmd 打开 FCStd，触发指定对象重计算。
-2. **采集层**：运行在被调试进程中的 C++ Capture API。
+2. **采集层**：LLDB Python 命令、断点自动动作和运行在被调试进程中的 C++ Capture API。
 3. **持久层**：Session 目录中的事件、BREP、派生 Mesh 和日志。
 4. **服务层**：Bridge 监听 Session、转换 Shape、向浏览器增量推送。
 5. **展示层**：Three.js 3D 场景和保留后的 2D UV 视图。
@@ -207,13 +212,14 @@ freecad-occt-debug-kit/
 │   └── occt-fillet-instrumentation.patch
 ├── scripts/
 │   ├── occ-debug-start.sh
+│   ├── lldb_occ_debug.py
 │   ├── export-fcstd-baseline.py
 │   ├── run-fcstd-case.sh
 │   └── run_fcstd_case.py
 └── .occ-debug/                     # 本地 Session，Git 忽略
 ```
 
-debug-kit 负责固定 FreeCAD、OCCT 和 Print revision，构建和链接 Capture API，管理 OCCT 埋点 patch，从 FCStd 提取 baseline，执行目标对象重计算，并向 Agent 提供统一命令和结果摘要。
+debug-kit 负责固定 FreeCAD、OCCT 和 Print revision，构建和加载 Capture 动态库，提供 LLDB 几何命令，管理少量 OCCT 埋点 patch，从 FCStd 提取 baseline，执行目标对象重计算，并向 Agent 提供统一命令和结果摘要。
 
 依赖规则：
 
@@ -447,7 +453,31 @@ TopoDS_Face
 
 这能够覆盖圆柱和圆锥的 U 周期缝线、球面的极点和退化边、同一 Edge 在闭合面上的两条 Pcurve、同一 3D 顶点在不同 Face 上的不同 UV，以及 REVERSED Edge 的参数方向。
 
-## 14. C++ Capture API
+## 14. Capture Core 与动态调用
+
+Capture Core 是所有生产方式共享的底层：
+
+```text
+LLDB 动态命令 ─────┐
+断点自动命令 ──────┼──► OccDebugCapture ──► Session
+OCCDBG_* 源码宏 ───┘
+```
+
+优先级是：人工探索使用 LLDB 动态命令；Agent 对已知位置重复观察使用断点自动命令；高频循环、极短生命周期和异常前关键状态使用源码宏。完整命令、加载、安全和验收设计见 [LLDB 动态几何采集设计](lldb-dynamic-geometry-capture.md)。
+
+动态命令示例：
+
+```text
+(lldb) occdbg group fillet/stripe/2
+(lldb) occdbg point P1 -- CP.Point()
+(lldb) occdbg face support-1 -- HS1->Face()
+(lldb) occdbg shape current -- myShape
+(lldb) occdbg clear fillet/stripe/2
+```
+
+简单值由 LLDB Python 通过 SBValue 读取；Shape、Curve、Face 和 BREP 由目标进程内一次性加载的 `libOccDebugCapture.dylib` 处理。Capture 动态库 API 不变时，观察不同变量无需重新编译。
+
+### 14.1 C++ Capture API
 
 建议调用形式：
 
@@ -475,7 +505,7 @@ OccDebug::Scope scope({
 });
 ```
 
-### 14.1 编译关闭
+### 14.2 编译关闭
 
 ```cpp
 #if defined(OCC_DEBUG_CAPTURE)
@@ -487,7 +517,7 @@ OccDebug::Scope scope({
 
 关闭采集宏后不得求值几何表达式、创建字符串或临时 Shape、写文件或改变异常和时序行为。
 
-### 14.2 运行时过滤
+### 14.3 运行时过滤
 
 ```bash
 OCC_DEBUG_SESSION=/path/to/session
@@ -690,7 +720,7 @@ fillet/failure
 
 ## 20. Agent 自动化流程
 
-第一阶段不接入 DAP。Agent 通过文件修改和脚本控制：
+第一阶段不接入 DAP。Agent 通过 LLDB batch commands、断点动作和运行脚本控制；只有动态方式无法可靠捕获的关键路径才修改源码：
 
 ```mermaid
 sequenceDiagram
@@ -701,10 +731,10 @@ sequenceDiagram
     participant B as Bridge
     participant V as Viewer
 
-    A->>S: 创建 Session、启用/插入埋点
-    A->>S: 增量构建 TKFillet 并 install
+    A->>S: 创建 Session、加载 Capture 和 LLDB 命令
+    A->>S: 配置断点与采集表达式
     A->>F: 打开 FCStd、touch/recompute 目标 Fillet
-    F->>C: 运行 OCCT，触发 Capture API
+    F->>C: 断点命令或关键源码探针触发 Capture API
     C-->>B: 追加 NDJSON/BREP
     B-->>V: SSE 推送增量对象
     F-->>A: 退出码、异常和运行摘要
@@ -721,7 +751,7 @@ scripts/run-fillet-agent.sh \
   --open-viewer
 ```
 
-脚本阶段：校验工作区和动态库，创建 Session，提取 baseline，构建受影响 target，安装本地 OCCT，运行 FreeCADCmd，收集退出码/异常/StripeStatus/BadShape，最后写 `run_end` 和机器可读 summary。
+脚本阶段：校验工作区和 Capture 动态库，创建 Session，提取 baseline，生成 LLDB breakpoint commands，运行 FreeCADCmd，收集退出码/异常/StripeStatus/BadShape，最后写 `run_end` 和机器可读 summary。只有使用源码探针或修改算法时才增量构建受影响 target。
 
 ## 21. 增量构建策略
 
@@ -928,11 +958,11 @@ Print 重构为 Three.js Viewer；Bridge tail NDJSON 并通过 SSE 推送；支�
 
 ### M2：FreeCAD baseline 和 Shape 管线
 
-实现 FCStd baseline、C++ Capture、BREP 资产、本地 OCCT Mesh 转换和 world placement 对齐测试。
+实现 FCStd baseline、Capture 动态库、`occdbg point/shape`、BREP 资产、本地 OCCT Mesh 转换和 world placement 对齐测试。
 
-### M3：圆角专用埋点
+### M3：动态调试命令和圆角适配器
 
-实现 Build/Compute/PerformSurf/SurfData/corner hooks、instrumentation patch、失败摘要和 BadShape。
+实现 `occdbg curve/edge/face/surfdata`、断点自动采集、Stripe/SurfData 适配器、失败摘要和 BadShape；只为关键失败路径加入 instrumentation patch。
 
 ### M4：Agent Runner
 
@@ -940,14 +970,14 @@ Print 重构为 Three.js Viewer；Bridge tail NDJSON 并通过 SSE 推送；支�
 
 ### M5：后续增强（不属于 MVP）
 
-增加 DAP/LLDB 自动控制、STEP 输入、时间轴和多次运行对比、Viewer 到 Agent 的双向命令，以及 Chamfer/Boolean/Offset/Sewing 等算法。
+增加 DAP 高层自动控制、STEP 输入、时间轴和多次运行对比、Viewer 到 Agent 的双向命令，以及 Chamfer/Boolean/Offset/Sewing 等算法。
 
 ## 29. 建议的 PR 拆分
 
 1. **Print：协议、Bridge、Three.js 增量 Viewer**——不包含 FreeCAD 依赖，可独立评审。
 2. **debug-kit：Session、Capture、BREP Mesh、FCStd baseline**——完成通用几何输出闭环。
-3. **debug-kit：OCCT Fillet instrumentation patch**——只关注圆角调用链和中间数据。
-4. **debug-kit：Agent Runner 和测试集**——完成自动修改、构建、复现和诊断。
+3. **debug-kit：LLDB 动态命令、断点动作和 Fillet Adapter**——覆盖任意观察与圆角中间数据。
+4. **debug-kit：Agent Runner、关键路径 instrumentation patch 和测试集**——完成自动复现、采集和诊断。
 
 不要把协议重构、前端重写、OCCT patch 和 Agent 自动化塞进一个不可独立验证的大提交。
 
@@ -1002,13 +1032,13 @@ Print 重构为 Three.js Viewer；Bridge tail NDJSON 并通过 SSE 推送；支�
 
 ## 33. 最终设计结论
 
-第一阶段采用“源码埋点 + 自动增量构建 + FreeCADCmd 复现 + 文件型 Session + SSE + 独立 Three.js Viewer”。
+第一阶段采用“LLDB 动态命令优先 + 断点自动采集 + 关键路径源码埋点 + 文件型 Session + SSE + 独立 Three.js Viewer”。
 
 这个方案：
 
 - 比 Debug Visualizer 更适合长期积累几何调试信息。
 - 比直接在 FreeCAD GUI 中创建临时对象更独立、更容易被 Agent 控制。
-- 比通过 LLDB/DAP 动态提取复杂 Shape 更稳定、更容易自动化。
+- Capture 动态库只需一次构建，之后可在安全断点任意输出当前变量；复杂 Shape 仍由目标进程内的同版本 OCCT 序列化。
 - 通过 FCStd baseline 保留真实问题上下文。
 - 通过本地 OCCT BREP 和 Mesh 管线保证显示与算法使用同一内核版本。
 - 通过 occurrence/Pcurve 模型覆盖周期面、缝线和退化边等关键边界场景。
