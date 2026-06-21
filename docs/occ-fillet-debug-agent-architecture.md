@@ -76,7 +76,7 @@ Debug Visualizer 可以保留为临时查看普通变量的辅助工具，但不
 
 构建一个相对独立、但与 FreeCAD/OCCT 调试紧密连接的几何调试工具，使 Agent 能够：
 
-1. 在 LLDB 暂停时动态输出当前几何，不为每次观察修改源码或重新编译。
+1. 在 LLDB 暂停时动态输出当前几何，并可从 VS Code Variables/Watch 右键“发送到 Print”，不为每次观察修改源码或重新编译。
 2. 将采集命令挂到断点，供 Agent 自动观察并继续运行。
 3. 使用 FreeCADCmd 加载原始 FCStd 并复现圆角问题。
 4. 在算法运行过程中输出点、曲线、面和 BRep Shape。
@@ -89,11 +89,11 @@ Debug Visualizer 可以保留为临时查看普通变量的辅助工具，但不
 目标工作流：
 
 ```text
-一次性加载 OccDebugCapture + LLDB 命令插件
+F5 准备 Session、Bridge、Print、OccDebugCapture 和 LLDB 命令插件
         ↓
 FreeCADCmd/FreeCAD 在断点暂停
         ↓
-人工命令、断点自动命令或少量源码埋点
+Variables/Watch 右键、人工命令、断点自动命令或少量源码埋点
         ↓
 埋点输出事件、BREP 和日志
         ↓
@@ -115,13 +115,15 @@ Viewer 在原始模型上叠加调试点线面
 - 支持 Normal、X-Ray 和 Solo 显示模式。
 - 支持 Agent 自动编译、运行和读取结构化结果。
 - 支持 `occdbg point/curve/edge/face/shape` 动态命令。
+- 支持 VS Code Variables 和 Watch 右键“发送到 Print”，包含自动类型识别和显式类型选择。
+- 正常 F5 自动准备 Session、Bridge、Print、Capture 和 LLDB 插件，发送操作绑定变量所属的准确栈帧。
 - 支持将采集动作挂到断点并自动继续。
 - 通过 patch 管理少量稳定 OCCT 埋点。
 - Viewer 未启动时，被调试程序仍能正常运行。
 
 ### 4.2 第一阶段明确不做
 
-- 不通过 DAP 自动控制 CodeLLDB。
+- 不通过 DAP 对 CodeLLDB 实现 Agent 高层自动驾驶；但允许 Kit 的轻量 VS Code 扩展使用公开 DAP 请求，把右键变量发送到当前暂停栈帧中的 `occdbg`。
 - 不要求每次观察变量都修改 OCCT 源码。
 - 不实现调试时间轴和任意时刻回放 UI。
 - 不把浏览器作为 BRep 几何内核。
@@ -147,12 +149,15 @@ Session 使用追加事件并可以在重新连接后恢复当前场景，但这
 | R8 | 不干扰算法 | 文件型非阻塞采集、异常隔离 | 关闭 Bridge/Viewer 后复现结果不变 |
 | R9 | 覆盖几何边界场景 | occurrence/pcurve 模型和专门测试集 | 圆柱缝线、球极点、退化边测试通过 |
 | R10 | 可复现 | 固定 FreeCAD/OCCT/Print revision | bootstrap 后得到相同工具链和协议版本 |
+| R11 | VS Code 无缝发送 | Variables/Watch 菜单 + frame 跟踪 + `occdbg emit` | 右键局部变量或 Watch 表达式后直接在 Print 增量出现 |
 
 ## 6. 总体架构
 
 ```mermaid
 flowchart LR
-    A["Agent / Human"] -->|"LLDB command / breakpoint action"| E["LLDB Geometry Commands"]
+    A["Agent / Human"] -->|"Variables/Watch 右键"| V["Kit VS Code Extension"]
+    V -->|"DAP evaluate at exact frame"| E["LLDB Geometry Commands"]
+    A -->|"LLDB command / breakpoint action"| E
     A -->|"仅关键路径"| B["OCCT source probe"]
     B --> C["Incremental Build"]
     C --> D["FreeCADCmd + local OCCT"]
@@ -167,13 +172,14 @@ flowchart LR
     I --> L
 ```
 
-系统分为五层：
+系统分为六层：
 
-1. **复现层**：FreeCADCmd 打开 FCStd，触发指定对象重计算。
-2. **采集层**：LLDB Python 命令、断点自动动作和运行在被调试进程中的 C++ Capture API。
-3. **持久层**：Session 目录中的事件、BREP、派生 Mesh 和日志。
-4. **服务层**：Bridge 监听 Session、转换 Shape、向浏览器增量推送。
-5. **展示层**：Three.js 3D 场景和保留后的 2D UV 视图。
+1. **VS Code 交互层**：Variables/Watch 右键菜单、frame 绑定、类型选择和连接状态。
+2. **复现层**：FreeCADCmd 打开 FCStd，触发指定对象重计算。
+3. **采集层**：LLDB Python 命令、断点自动动作和运行在被调试进程中的 C++ Capture API。
+4. **持久层**：Session 目录中的事件、BREP、派生 Mesh 和日志。
+5. **服务层**：Bridge 监听 Session、转换 Shape、向浏览器增量推送。
+6. **展示层**：Three.js 3D 场景和保留后的 2D UV 视图。
 
 被调试进程不直接连接浏览器，以隔离浏览器刷新、网络断开、Bridge 崩溃和前端异常。
 
@@ -206,6 +212,7 @@ freecad-occt-debug-kit/
 ├── tools/
 │   ├── occ-debug-capture/          # C++ 采集库
 │   ├── occ-debug-mesh/             # 本地 OCCT BREP→Mesh
+│   ├── vscode-occ-debug/            # Variables/Watch → Print 工作区扩展
 │   └── Print/                      # bootstrap 拉取，外层仓库忽略
 ├── patches/
 │   ├── occt-debug-build.patch
@@ -219,7 +226,7 @@ freecad-occt-debug-kit/
 └── .occ-debug/                     # 本地 Session，Git 忽略
 ```
 
-debug-kit 负责固定 FreeCAD、OCCT 和 Print revision，构建和加载 Capture 动态库，提供 LLDB 几何命令，管理少量 OCCT 埋点 patch，从 FCStd 提取 baseline，执行目标对象重计算，并向 Agent 提供统一命令和结果摘要。
+debug-kit 负责固定 FreeCAD、OCCT 和 Print revision，构建和加载 Capture 动态库，提供 LLDB 几何命令和 VS Code 右键发送扩展，管理少量 OCCT 埋点 patch，从 FCStd 提取 baseline，执行目标对象重计算，并向 Agent 提供统一命令和结果摘要。
 
 依赖规则：
 
@@ -458,9 +465,10 @@ TopoDS_Face
 Capture Core 是所有生产方式共享的底层：
 
 ```text
-LLDB 动态命令 ─────┐
-断点自动命令 ──────┼──► OccDebugCapture ──► Session
-OCCDBG_* 源码宏 ───┘
+VS Code Variables/Watch ─► LLDB 动态命令 ─┐
+手工 LLDB 动态命令 ──────────────────────┤
+断点自动命令 ────────────────────────────┼──► OccDebugCapture ──► Session
+OCCDBG_* 源码宏 ─────────────────────────┘
 ```
 
 优先级是：人工探索使用 LLDB 动态命令；Agent 对已知位置重复观察使用断点自动命令；高频循环、极短生命周期和异常前关键状态使用源码宏。完整命令、加载、安全和验收设计见 [LLDB 动态几何采集设计](lldb-dynamic-geometry-capture.md)。
@@ -476,6 +484,8 @@ OCCDBG_* 源码宏 ───┘
 ```
 
 简单值由 LLDB Python 通过 SBValue 读取；Shape、Curve、Face 和 BREP 由目标进程内一次性加载的 `libOccDebugCapture.dylib` 处理。Capture 动态库 API 不变时，观察不同变量无需重新编译。
+
+第一版不能只交付 Debug Console 命令。Kit 同时提供轻量 VS Code 扩展，在 Variables 和 Watch 中注册“发送到 Print”。扩展读取 `evaluateName` 或原始 Watch 表达式，通过公开的调试适配器跟踪接口维护 `variablesReference → {frameId, threadId, frameIndex}` 映射，再在准确 frame 调用 `occdbg emit`。它绝不把格式化后的 `value` 文本当作表达式，也不直接连接浏览器；完整设计、边界和测试见 [VS Code 一键发送几何到 Print](vscode-send-to-print.md)。
 
 ### 14.1 C++ Capture API
 
@@ -720,7 +730,7 @@ fillet/failure
 
 ## 20. Agent 自动化流程
 
-第一阶段不接入 DAP。Agent 通过 LLDB batch commands、断点动作和运行脚本控制；只有动态方式无法可靠捕获的关键路径才修改源码：
+第一阶段不让 Agent 通过 DAP 自动驾驶 VS Code。Agent 通过 LLDB batch commands、断点动作和运行脚本控制；VS Code 扩展使用 DAP 的范围只限于人类右键发送变量和精确绑定 frame。只有动态方式无法可靠捕获的关键路径才修改源码：
 
 ```mermaid
 sequenceDiagram
@@ -928,6 +938,15 @@ Agent 不应只依赖 `StdFail_NotDone` 字符串。每次运行生成 summary�
 - 被调试进程崩溃。
 - Capture 编译宏完全关闭。
 
+### 26.6 VS Code 发送测试
+
+- Variables 局部变量、嵌套成员和 Watch 返回值表达式。
+- 自动类型识别与 Point/Curve/Edge/Wire/Face/Shape 显式类型回退。
+- 递归调用中的同名变量和多线程非 top frame，验证不会发送错误 frame 中的几何。
+- 空 Handle、Null Shape、`<optimized out>`、运行态目标和 Capture 未加载。
+- Bridge/Viewer 离线时先持久化，重连后对象恢复。
+- CodeLLDB `commands` 和 `evaluate` console mode。
+
 ## 27. 验收标准
 
 MVP 完成需同时满足：
@@ -943,6 +962,9 @@ MVP 完成需同时满足：
 9. Agent 能读取结构化 summary，不依赖人工阅读终端输出。
 10. 原始 FCStd 在运行前后未改变。
 11. bootstrap 能恢复相同 FreeCAD、OCCT、Print 和埋点版本。
+12. VS Code Variables 和 Watch 都能右键发送几何到 Print，且无需修改源码或重新编译。
+13. 递归 frame、多线程和同名变量场景能够绑定正确栈帧；无法确定时明确拒绝而不是静默猜测。
+14. 正常 F5 能自动准备 Session、Bridge、Print、Capture 和 LLDB 插件。
 
 建议非功能目标：普通点/线事件从落盘到 Viewer 出现的本机延迟小于 500 ms；Viewer 首次加载中等规模 baseline 时保持可交互；Capture 关闭时不引入可观测算法行为变化。
 
@@ -958,7 +980,7 @@ Print 重构为 Three.js Viewer；Bridge tail NDJSON 并通过 SSE 推送；支�
 
 ### M2：FreeCAD baseline 和 Shape 管线
 
-实现 FCStd baseline、Capture 动态库、`occdbg point/shape`、BREP 资产、本地 OCCT Mesh 转换和 world placement 对齐测试。
+实现 FCStd baseline、Capture 动态库、`occdbg point/shape`、BREP 资产、本地 OCCT Mesh 转换和 world placement 对齐测试；同时交付 Kit 的 VS Code 扩展，使 Variables/Watch 可右键发送，正常 F5 自动准备 Session、Bridge、Print 和调试插件。M2 是第一版端到端闭环的完成门槛。
 
 ### M3：动态调试命令和圆角适配器
 
@@ -970,14 +992,15 @@ Print 重构为 Three.js Viewer；Bridge tail NDJSON 并通过 SSE 推送；支�
 
 ### M5：后续增强（不属于 MVP）
 
-增加 DAP 高层自动控制、STEP 输入、时间轴和多次运行对比、Viewer 到 Agent 的双向命令，以及 Chamfer/Boolean/Offset/Sewing 等算法。
+增加 Agent 的 DAP 高层自动控制、批量多选发送、Hover/编辑器选区发送、STEP 输入、时间轴和多次运行对比、Viewer 到 Agent 的双向命令，以及 Chamfer/Boolean/Offset/Sewing 等算法。Variables/Watch 单变量发送不属于 M5。
 
 ## 29. 建议的 PR 拆分
 
 1. **Print：协议、Bridge、Three.js 增量 Viewer**——不包含 FreeCAD 依赖，可独立评审。
-2. **debug-kit：Session、Capture、BREP Mesh、FCStd baseline**——完成通用几何输出闭环。
-3. **debug-kit：LLDB 动态命令、断点动作和 Fillet Adapter**——覆盖任意观察与圆角中间数据。
-4. **debug-kit：Agent Runner、关键路径 instrumentation patch 和测试集**——完成自动复现、采集和诊断。
+2. **debug-kit：Session、Capture、BREP Mesh、FCStd baseline**——完成通用几何输出管线。
+3. **debug-kit：VS Code Variables/Watch 发送扩展和 F5 编排**——完成第一版人类调试闭环。
+4. **debug-kit：LLDB 动态命令、断点动作和 Fillet Adapter**——覆盖任意观察与圆角中间数据。
+5. **debug-kit：Agent Runner、关键路径 instrumentation patch 和测试集**——完成自动复现、采集和诊断。
 
 不要把协议重构、前端重写、OCCT patch 和 Agent 自动化塞进一个不可独立验证的大提交。
 
@@ -994,19 +1017,21 @@ Print 重构为 Three.js Viewer；Bridge tail NDJSON 并通过 SSE 推送；支�
 | Capture 异常传播 | 改变圆角结果 | API 内部异常隔离，采集失败只写诊断 |
 | 用户模型泄漏进 Git | 商业数据风险 | Session Git ignore、提交前检查、不提交 BREP |
 | Viewer 与算法内核版本不一致 | 显示和真实几何不同 | BREP/Mesh 均由本地 OCCT 7.8.1 处理 |
+| VS Code 菜单参数或 frame 绑定变化 | 发送错误变量或扩展失效 | 结构校验、固定受支持版本、DAP tracker 集成测试、歧义时拒绝发送 |
 
 ## 31. 学习顺序
 
 1. 阅读 `docs/occt-debugging.md`，理解 FreeCAD 如何加载本地 OCCT。
 2. 阅读 `.vscode/launch.json` 和 `scripts/fc-lldb.sh`，理解 LLDB 只是调试执行器。
-3. 阅读 `BRepFilletAPI_MakeFillet::Build()` 和 `ChFi3d_Builder::Compute()`。
-4. 理解 `TopoDS_Shape = TShape + Location + Orientation`。
-5. 理解 Face、Edge、3D Curve、Pcurve 和参数范围的关系。
-6. 实现最小 point/polyline NDJSON Capture。
-7. 实现 Session + SSE + Three.js 增量场景。
-8. 实现 BREP 保存和 `Poly_Triangulation` 提取。
-9. 完成 FCStd baseline 对齐。
-10. 最后进入 SurfData、Stripe、CommonPoint 和 corner 埋点。
+3. 阅读 `docs/vscode-send-to-print.md`，理解右键变量如何绑定 CodeLLDB 栈帧并进入统一 Capture 管线。
+4. 阅读 `BRepFilletAPI_MakeFillet::Build()` 和 `ChFi3d_Builder::Compute()`。
+5. 理解 `TopoDS_Shape = TShape + Location + Orientation`。
+6. 理解 Face、Edge、3D Curve、Pcurve 和参数范围的关系。
+7. 实现最小 point/polyline NDJSON Capture。
+8. 实现 Session + SSE + Three.js 增量场景。
+9. 实现 BREP 保存和 `Poly_Triangulation` 提取。
+10. 完成 Variables/Watch 发送与 FCStd baseline 对齐。
+11. 最后进入 SurfData、Stripe、CommonPoint 和 corner 埋点。
 
 ## 32. 术语表
 
@@ -1015,6 +1040,7 @@ Print 重构为 Three.js Viewer；Bridge tail NDJSON 并通过 SSE 推送；支�
 | LLDB | Clang/LLVM 生态中的原生调试器 |
 | CodeLLDB | VS Code 中连接 LLDB 的 Debug Adapter |
 | DAP | 编辑器与 Debug Adapter 之间的调试协议 |
+| DebugAdapterTracker | VS Code 扩展观察 DAP 请求/响应并维护变量与栈帧关系的公开接口 |
 | FCStd | FreeCAD 文档格式，包含文档对象和底层 Shape |
 | STEP | 跨 CAD 系统的标准交换格式 |
 | BREP | OCCT 原生边界表示 Shape 序列化格式 |
@@ -1032,12 +1058,13 @@ Print 重构为 Three.js Viewer；Bridge tail NDJSON 并通过 SSE 推送；支�
 
 ## 33. 最终设计结论
 
-第一阶段采用“LLDB 动态命令优先 + 断点自动采集 + 关键路径源码埋点 + 文件型 Session + SSE + 独立 Three.js Viewer”。
+第一阶段采用“VS Code Variables/Watch 一键发送 + LLDB 动态命令优先 + 断点自动采集 + 关键路径源码埋点 + 文件型 Session + SSE + 独立 Three.js Viewer”。
 
 这个方案：
 
 - 比 Debug Visualizer 更适合长期积累几何调试信息。
 - 比直接在 FreeCAD GUI 中创建临时对象更独立、更容易被 Agent 控制。
+- 第一版即可从 Variables/Watch 右键发送到 Print；Debug Console 是补充入口，不是唯一入口。
 - Capture 动态库只需一次构建，之后可在安全断点任意输出当前变量；复杂 Shape 仍由目标进程内的同版本 OCCT 序列化。
 - 通过 FCStd baseline 保留真实问题上下文。
 - 通过本地 OCCT BREP 和 Mesh 管线保证显示与算法使用同一内核版本。

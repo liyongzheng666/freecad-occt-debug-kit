@@ -109,6 +109,7 @@ Generated directories are intentionally excluded from ordinary VS Code search an
 
 - [docs/occ-fillet-debug-agent-architecture.md](docs/occ-fillet-debug-agent-architecture.md) - architecture and implementation plan for the incremental FreeCAD/OCCT fillet-debugging agent and geometry viewer.
 - [docs/lldb-dynamic-geometry-capture.md](docs/lldb-dynamic-geometry-capture.md) - debugger-first geometry capture commands that emit points, curves, topology, and BREP assets without rebuilding for each observation.
+- [docs/vscode-send-to-print.md](docs/vscode-send-to-print.md) - first-version VS Code Variables/Watch right-click workflow for sending the selected geometry to Print through CodeLLDB and the shared Capture pipeline.
 
 - [docs/vscode-build-and-pixi.md](docs/vscode-build-and-pixi.md) — how the VS Code build/link pipeline and Pixi fit together (beginner-friendly intro to Pixi and CMake).
 - [docs/occt-debugging.md](docs/occt-debugging.md) — the debugging workflow and troubleshooting guide.

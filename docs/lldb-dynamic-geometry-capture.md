@@ -14,11 +14,19 @@
 
 三种模式共享同一个 `OccDebugCapture`、Session 目录和 Print 协议。Print 不区分事件来自 LLDB、断点命令还是源码宏。
 
-该决策不等价于在 MVP 中接入 DAP。第一阶段由 LLDB Python 命令和 LLDB batch script 完成；DAP 只作为后续更高层的调试器控制通道。
+该决策不等价于让 Agent 在 MVP 中通过 DAP 自动驾驶调试器。第一阶段的采集能力仍由 LLDB Python 命令和 LLDB batch script 完成；但第一版允许 Kit 的轻量 VS Code 扩展使用公开 DAP 请求，把 Variables/Watch 右键操作路由到指定 frame 的同一条 LLDB 命令。Agent 的高层 DAP 控制仍属于后续范围。
 
 ## 2. 使用体验
 
 FreeCAD/OCCT 在断点暂停后：
+
+```text
+Variables / Watch 右键
+  └─ 发送到 Print（自动识别）
+     发送到 Print：Point / Curve / Edge / Wire / Face / Shape
+```
+
+高级用户也可以在 Debug Console 直接执行：
 
 ```text
 (lldb) occdbg session
@@ -64,9 +72,18 @@ Capture 不可用：
 [occdbg] libOccDebugCapture is not loaded; run `occdbg load`
 ```
 
+### 2.2 VS Code 右键发送
+
+右键入口是第一版 P0 能力，不是后续增强。Kit 内的工作区扩展从 Variables 使用 `evaluateName`、从 Watch 使用原始表达式，恢复变量所属 `frameId/threadId/frameIndex` 后调用统一的 `occdbg emit`。格式化后的 `value` 只能显示，不能作为表达式执行。
+
+扩展通过 Base64 JSON 请求传递表达式、kind、label 和 group，避免 C++ 模板、引号和空格的命令行转义问题。自动类型识别存在歧义时必须让用户选择类型；多线程或递归调用中无法确认 frame 时必须拒绝静默猜测。完整设计见 [VS Code 一键发送几何到 Print](vscode-send-to-print.md)。
+
 ## 3. 组件结构
 
 ```text
+tools/vscode-occ-debug
+        │ Variables/Watch + exact frameId
+        ▼
 scripts/lldb_occ_debug.py
         │
         ├── 简单值：SBValue 读取 → Python 写 NDJSON
@@ -86,6 +103,10 @@ scripts/lldb_occ_debug.py
 
 ```text
 freecad-occt-debug-kit/
+├── tools/vscode-occ-debug/
+│   ├── package.json
+│   ├── src/
+│   └── test/
 ├── tools/occ-debug-capture/
 │   ├── CMakeLists.txt
 │   ├── include/
@@ -372,9 +393,10 @@ Print 只将该字段用于诊断和筛选，不改变渲染逻辑。
 4. `occdbg shape` 和 BREP 原子写入。
 5. `occdbg curve/edge/face`。
 6. Print Bridge tail NDJSON。
-7. 断点自动采集和 LLDB batch runner。
-8. Fillet 的 Stripe/SurfData 动态适配器。
-9. 只为关键、高频路径增加源码宏。
+7. VS Code Variables/Watch 发送扩展、DAP frame 映射和 F5 编排。
+8. 断点自动采集和 LLDB batch runner。
+9. Fillet 的 Stripe/SurfData 动态适配器。
+10. 只为关键、高频路径增加源码宏。
 
 ## 13. 验收标准
 
@@ -382,6 +404,9 @@ Print 只将该字段用于诊断和筛选，不改变渲染逻辑。
 - 在任意有效断点可输出当前 `gp_Pnt`，无需修改源码。
 - 可输出当前 `TopoDS_Shape` 为 BREP，并在 Print 中显示。
 - 支持 `builder.Shape()` 等返回值表达式。
+- Variables 和 Watch 都能右键发送到 Print，并提供自动类型和显式类型入口。
+- 递归 frame、多线程和同名变量不会静默输出错误 frame 中的对象。
+- 正常 F5 自动准备 Session、Bridge、Print、Capture 和 LLDB 插件。
 - 表达式错误、空 Handle 和未加载动态库有明确反馈。
 - 将命令挂到断点后可自动采集并继续。
 - Viewer/Bridge 未启动时动态命令仍能写入 Session。
@@ -390,6 +415,6 @@ Print 只将该字段用于诊断和筛选，不改变渲染逻辑。
 
 ## 14. 最终结论
 
-人类开发者调研未知几何问题时，应以 LLDB 动态命令为主；Agent 对已知位置进行重复观察时，应以断点自动命令为主；只有高频、极短生命周期和关键失败路径才使用源码埋点。
+人类开发者调研未知几何问题时，应优先使用 Variables/Watch 右键入口，Debug Console 的 LLDB 动态命令作为高级入口；Agent 对已知位置进行重复观察时，应以断点自动命令为主；只有高频、极短生命周期和关键失败路径才使用源码埋点。
 
 这使 Print 成为统一的几何观察面，而不是强迫每次观察都经历“改代码—编译—运行”的工具。
