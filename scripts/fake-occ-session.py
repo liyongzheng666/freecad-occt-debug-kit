@@ -7,21 +7,29 @@
 # tail->SSE path and the viewer's live ingestion can be exercised WITHOUT
 # the C++ Capture library existing yet.
 #
-# Contract (see docs/print-linkage-tech-decisions.md):
-#   - <session>/events.ndjson : one complete JSON event per line.
-#   - Each line is written atomically (single write of "<json>\n").
-#   - Events mirror viewer/src/sample/sampleEvents.ts, only inline
-#     geometry kinds (no asset/shape/face) for the first slice.
+# Reset semantics (linkage doc §8 H2 / boundary-review A group):
+#   - A "reload" is NOT a physical truncate. Truncating breaks already
+#     connected viewers (stale tail offset) and collides with the reducer's
+#     monotonic per-run seq + unique-id guards.
+#   - Instead, a reset APPENDS a `clear_scene` event under a NEW run_id and
+#     re-emits the debug objects. The protected baseline is emitted once and
+#     persists across runs. Connected viewers reload with no refresh.
+#
+#   Default behavior:
+#     - empty/new session  -> fresh run (baseline + debug), run-0001
+#     - existing session   -> reset run (clear_scene + debug), run-000N+1
+#     --fresh forces a brand-new session file (truncates).
 #
 #   Usage:
 #     scripts/fake-occ-session.py [--session DIR] [--interval SECONDS]
-#                                 [--once] [--append]
+#                                 [--once] [--fresh]
 #
 #   Defaults: session = $OCC_DEBUG_SESSION or .occ-debug/sessions/dev
 # =====================================================================
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -29,11 +37,10 @@ from pathlib import Path
 
 SCHEMA_VERSION = "1.0"
 SESSION_ID = "dev-fake-0001"
-RUN_ID = "run-0001"
+RUN_RE = re.compile(r"^run-(\d+)$")
 
-# Inline-geometry events equivalent to the viewer's sampleEvents, plus a
-# couple extra kinds (vector, point_set) to exercise more renderers.
-EVENTS = [
+# Emitted once per session and protected; persists across resets.
+BASELINE_EVENTS = [
     {
         "op": "add",
         "id": "baseline/body-bounds",
@@ -45,6 +52,10 @@ EVENTS = [
         "topology_ref": {"freecad_object": "Body", "shape_type": "SOLID", "occurrence_path": "Body/Tip"},
         "metadata": {"producer": "fake-session"},
     },
+]
+
+# Re-emitted on every run (cleared by clear_scene first on a reset).
+DEBUG_EVENTS = [
     {
         "op": "add",
         "id": "fillet/input/edge-3",
@@ -120,19 +131,19 @@ EVENTS = [
         "style": {"color": "#9ac6b6", "size": 6},
         "metadata": {"producer": "fake-session"},
     },
-    {
-        "op": "run_end",
-        "status": "succeeded",
-        "summary": {"entities": 6, "note": "fake session complete"},
-    },
 ]
+
+RUN_END_EVENT = {"op": "run_end", "status": "succeeded", "summary": {"note": "fake run complete"}}
+CLEAR_SCENE_EVENT = {"op": "clear_scene", "metadata": {"producer": "fake-session", "reason": "new run"}}
 
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat()
 
 
-def write_manifest(session: Path) -> None:
+def ensure_manifest(session: Path) -> None:
+    if (session / "manifest.json").exists():
+        return
     manifest = {
         "schema_version": SCHEMA_VERSION,
         "session_id": SESSION_ID,
@@ -146,19 +157,36 @@ def write_manifest(session: Path) -> None:
     (session / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def append_line(events_path: Path, event: dict, seq: int) -> None:
-    """Append one complete event as a single atomic write."""
+def scan_runs(events_path: Path) -> int:
+    """Return the highest run number already present in events.ndjson (0 if none)."""
+    if not events_path.exists():
+        return 0
+    highest = 0
+    for raw in events_path.open(encoding="utf-8"):
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            run_id = json.loads(raw).get("run_id", "")
+        except json.JSONDecodeError:
+            continue
+        match = RUN_RE.match(run_id)
+        if match:
+            highest = max(highest, int(match.group(1)))
+    return highest
+
+
+def append_line(events_path: Path, event: dict, run_id: str, seq: int) -> None:
+    """Append one complete event as a single atomic write (contract §3.4)."""
     envelope = {
         "schema_version": SCHEMA_VERSION,
         "session_id": SESSION_ID,
-        "run_id": RUN_ID,
+        "run_id": run_id,
         "seq": seq,
         "timestamp_ns": time.time_ns(),
         **event,
     }
     line = json.dumps(envelope, ensure_ascii=False) + "\n"
-    # One write() of the full line keeps the Bridge from ever reading a
-    # half-written record (contract §3.4).
     with open(events_path, "a", encoding="utf-8") as handle:
         handle.write(line)
         handle.flush()
@@ -171,34 +199,41 @@ def main() -> int:
     parser.add_argument("--session", default=default_session, help="Session directory (default: $OCC_DEBUG_SESSION or .occ-debug/sessions/dev)")
     parser.add_argument("--interval", type=float, default=0.8, help="Seconds between appended events in stream mode (default: 0.8)")
     parser.add_argument("--once", action="store_true", help="Write all events immediately, no delay")
-    parser.add_argument("--append", action="store_true", help="Append to an existing events.ndjson instead of truncating")
+    parser.add_argument("--fresh", action="store_true", help="Force a brand-new session file (truncate); connected viewers must refresh")
     args = parser.parse_args()
 
     session = Path(args.session)
     (session / "assets").mkdir(parents=True, exist_ok=True)
     events_path = session / "events.ndjson"
 
-    if not args.append:
+    is_fresh = args.fresh or not events_path.exists() or events_path.stat().st_size == 0
+    if args.fresh:
         events_path.write_text("", encoding="utf-8")
-    write_manifest(session)
+    ensure_manifest(session)
 
-    # Continue seq after the existing line count when appending.
-    start_seq = 1
-    if args.append and events_path.exists():
-        start_seq = sum(1 for _ in events_path.open(encoding="utf-8")) + 1
+    if is_fresh:
+        run_id = "run-0001"
+        events = [*BASELINE_EVENTS, *DEBUG_EVENTS, RUN_END_EVENT]
+        mode = "fresh"
+    else:
+        run_id = f"run-{scan_runs(events_path) + 1:04d}"
+        # clear_scene wipes the previous run's debug objects (baseline is
+        # protected and persists), then we re-emit the debug objects.
+        events = [CLEAR_SCENE_EVENT, *DEBUG_EVENTS, RUN_END_EVENT]
+        mode = "reset"
 
     print(f"[fake-session] session={session}")
-    print(f"[fake-session] events={events_path}  mode={'once' if args.once else 'stream'}  start_seq={start_seq}")
+    print(f"[fake-session] mode={mode}  run_id={run_id}  events={events_path}")
 
-    for index, event in enumerate(EVENTS):
-        seq = start_seq + index
-        append_line(events_path, event, seq)
+    for index, event in enumerate(events):
+        seq = index + 1
+        append_line(events_path, event, run_id, seq)
         label = event.get("label", event["op"])
-        print(f"[fake-session] seq={seq} {event['op']:<8} {label}")
-        if not args.once and index < len(EVENTS) - 1:
+        print(f"[fake-session] seq={seq} {event['op']:<11} {label}")
+        if not args.once and index < len(events) - 1:
             time.sleep(args.interval)
 
-    print(f"[fake-session] done: {len(EVENTS)} events.")
+    print(f"[fake-session] done: {len(events)} events ({mode}).")
     return 0
 
 
