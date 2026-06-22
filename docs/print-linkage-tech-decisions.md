@@ -63,30 +63,33 @@ occdbg / Capture ──► events.ndjson ─────────────
 
 ## 4. `print-mesh` 资产格式
 
-OCCT 三角化（`Poly_Triangulation`）产出节点+三角形索引；**法线是可选的**，缺失时由 `occ-debug-mesh` 现算，且 `REVERSED` 朝向的 face 必须翻向。线格式按 face 分组、坐标用 double：
+OCCT 三角化（`Poly_Triangulation`）产出节点+三角形索引；**法线可选**，缺失时由 `occ-debug-mesh` 现算，`REVERSED` 翻向、Location 含镜像（行列式<0）时翻三角绕序。按 face 分组，**坐标为世界系 double**——唯一的显示原点是 manifest 的**会话级 `local_origin`**，由 viewer 在降 Float32 前统一减一次；print-mesh **不带 per-asset origin**（occ-debug-mesh 因此无需知道 origin）：
 
 ```jsonc
 {
   "format_version": "1.0",
   "unit": "mm",
-  "local_origin": [x0, y0, z0],          // 可选；positions 相对此偏移，规避远原点 Float32 抖动
+  "partial": false,                       // 坏 shape 部分网格化时为 true
+  "failed_faces": [],                     // 未能网格化的 face_id 列表
   "faces": [
     {
-      "face_id": "Face3",                 // 回映射拓扑用
-      "orientation": "FORWARD",           // FORWARD/REVERSED，决定法线方向
-      "positions": [/* double, 相对 local_origin */],
-      "indices":   [/* 三角形顶点索引，Uint32 语义 */],
-      "normals":   [/* 生产端通常已补全（含 orientation 翻向）；省略时 viewer 兜底现算 */]
+      "face_id": "F3",                    // = TopExp::MapShapes 索引，与事件 topology_ref 共用同一把 key
+      "orientation": "FORWARD",           // 决定法线方向
+      "positions": [/* 世界 double */],
+      "indices":   [/* 三角形顶点索引；viewer 用 Uint32 */],
+      "normals":   [/* 生产端通常已补全；省略时 viewer 兜底现算 */]
     }
   ],
   "edges": [
-    { "edge_id": "Edge7", "points": [/* double polyline，相对 local_origin */] }
+    { "edge_id": "E7", "points": [/* 世界 double polyline */] }
   ]
 }
 ```
 
-- viewer 端按 `face_id`/`edge_id` 建独立 Object3D，支撑选中/高亮/分面着色。
-- `format_version` 独立于事件协议的 `schema_version`，允许资产格式单独演进。
+- **资产引用契约**：事件 `asset.path` 相对 `<session>/assets/`、无前导 `/`，映射到 Bridge 的 `/assets/<path>`；`asset.sha256` 由 `occ-debug-mesh` 计算，viewer 据此缓存去重。
+- viewer 按 `face_id`/`edge_id` 建独立 Object3D，支撑**子面/子边选择**与分面着色；开放壳（调试常见）用 `DoubleSide` 材质。
+- 裸 `Edge`/`Wire` 输入只出 `edges`、无 `faces`；裸 `Vertex` 退化为点事件。
+- `format_version` 独立于事件 `schema_version`，资产格式可单独演进。
 
 ## 5. 选型带来的待建项
 

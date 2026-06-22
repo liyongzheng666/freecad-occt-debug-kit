@@ -1,4 +1,4 @@
-# M2 调研笔记
+<!-- # M2 调研笔记 -->
 
 > 状态：调研中（决策待定）<br>
 > 核对日期：2026-06-21<br>
@@ -27,6 +27,12 @@ severity：🔴 架构/正确性阻塞 ｜ 🟠 需在实现中定 ｜ 🟡 打�
 | D1 | StrictMode 双连诊断噪声 | viewer 健壮性 | ⚪ |
 | D3 | 重连无退避/终态 | viewer 健壮性 | ⚪ |
 | D4 | NaN/Inf 坐标不校验 | viewer 健壮性 | ⚪ |
+| M2-12 | events.ndjson **多写者并发**（occdbg + Capture-in-debuggee + daemon），同 run_id 的 seq 无单一权威 | 生产端并发 | 🔴 |
+| M2-13 | occ-debug-mesh 必须网格化**坏/开放/自交 shape**（M2 输入常是失败几何）而不卡死 | 网格鲁棒性 | 🔴 |
+| M2-14 | 裸 `Edge`/`Wire`/`Vertex` 输入（fillet 输入本就是边）以面为中心的 mesher 产不出 | 输入覆盖 | 🟠 |
+| M2-15 | 缺**子面/子边选择**模型——store 只有实体级 `selectedId` | viewer 选择 | 🟠 |
+| M2-16 | mesh-ready `update` 对**已被 remove/clear 的实体**竞态 | 时序 | 🟠 |
+| M2-17 | `occdbg surfdata`(ChFiDS) 需 TKFillet 适配器，与 capture 禁链 TKFillet 冲突 | 范围划分 | 🟡 |
 
 ## 2. M2-1/2/3：白话解释
 
@@ -146,7 +152,101 @@ viewer(M2-1 A): add 时显示占位 ──收到 update──► fetch print-mes
 - [ ] M2-1：渲染异步化方案（推荐 A 异步 renderer + 占位替换）
 - [ ] M2-2：404 竞态方案（推荐 B 两段式 add→update）
 - [ ] M2-3：网格化编排（推荐 A 独立守护进程）
-- [ ] M2-4：世界坐标契约（每资产"已 bake"标志 + occ-debug-mesh 输出世界坐标）
+- [ ] M2-4：世界坐标契约（occ-debug-mesh 输出世界 double，Location 累积已应用、镜像翻绕序）
 - [ ] M2-5：face/edge 命名（TopExp::MapShapes 索引，print-mesh 与 topology_ref 共用）
-- [ ] M2-6：local_origin（会话级单一原点，记 manifest）
+- [ ] M2-6：local_origin（会话级单一原点，记 manifest，viewer 降 Float32 前减）
 - [ ] M2-7：deflection（相对挠度 + 角度≈0.5、钳 ≥0.2）
+- [ ] M2-12：seq 权威——daemon 的 update 用**独立 run_id 命名空间**（`run-NNNN/mesh`）解耦
+- [ ] M2-13：mesher 鲁棒性——每面 try/catch + 超时看门狗 + `partial`/`failed_faces` 标记
+- [ ] M2-14：按顶层类型分派（Face/Shell/Solid→面网格；Edge/Wire→edges；Vertex→点）
+- [ ] M2-15：store 增 `selectedFaceId`/`selectedEdgeId`，拾取与 Inspector 接子面
+- [ ] M2-16：reducer 容忍"update 不存在 id"降级为低级诊断（mesh-ready 竞态）
+- [ ] M2-17：surfdata 划入 M3；M2 的 occdbg 命令集不含 surfdata
+
+## 7. 实施清单（修订版，已并入 §8 漏洞修复）
+
+`新`=新建 `改`=修改。**🆕** 标记为深挖漏洞后新增/修正的条目。
+
+### A. KIT — 生产端 C++
+
+| 文件 | 新/改 | 内容 |
+| --- | --- | --- |
+| `tools/occ-debug-capture/{CMakeLists,include/OccDebugCApi.h,src/*}` | 新 | C ABI（EmitPoint/Curve/Shape/Clear/LastError）+ NDJSON SessionWriter + BREP 导出；只链低层 OCCT、**禁链 TKFillet** |
+| `tools/occ-debug-mesh/CMakeLists.txt` | 新 | 链本地 OCCT 网格 toolkit；指向 `occt/install/debug` |
+| `tools/occ-debug-mesh/src/Mesher.cxx` | 新 | `BRepMesh_IncrementalMesh`(相对挠度,角≈0.5,钳≥0.2)；`TopExp::MapShapes` 出 id；读 `Poly_Triangulation` **应用累积 Location→世界 double**；法线+`REVERSED`+镜像翻绕序 🆕 |
+| `tools/occ-debug-mesh/src/ShapeDispatch.cxx` | 新 🆕 | **按顶层类型分派**：Face/Shell/Solid→面网格；Edge/Wire→edges；Vertex→点（M2-14） |
+| `tools/occ-debug-mesh/src/Robust.cxx` | 新 🆕 | **每面 try/catch + 超时看门狗**，跳过不可网格化面并写 `partial`/`failed_faces`（M2-13） |
+| `tools/occ-debug-mesh/src/PrintMeshJson.cxx` | 新 | 序列化 per-face + edges；**世界 double、无 per-asset origin**；算 `sha256` 🆕 |
+
+### B. KIT — 生产端编排（Python/Shell）
+
+| 文件 | 新/改 | 内容 |
+| --- | --- | --- |
+| `scripts/lldb_occ_debug.py` | 新 | `occdbg` 命令族（**不含 surfdata**，划 M3 🆕）；简单值 SBValue→NDJSON、复杂走 Capture C ABI |
+| `scripts/occ-mesh-daemon.py` | 新 | watch `assets/*.brep`→调 `$OCC_DEBUG_MESH_BIN` 🆕→写 `.mesh.json`→**追加 update 事件（独立 run_id 命名空间 `run-NNNN/mesh`）** 🆕；幂等跳过已网格化 🆕 |
+| `scripts/export-fcstd-baseline.py` | 新 | FreeCADCmd 算全局 Placement、导 baseline BREP + 写 manifest（`local_origin`/freecad_revision/occt_revision） |
+| `scripts/validate-events.py` | 新 | 用 Print `protocol/*.schema.json` 校验产出（M2-8/H3） |
+| `scripts/occ-debug-start.sh` | 新 | F5 编排 + **就绪顺序**：建 session→起 daemon→跑 baseline→lldb 拉 FreeCAD 🆕 |
+| `scripts/bootstrap.sh` | 改 | 增两个 C++ 工具的构建步骤（M2-10） |
+
+### C. PRINT — 协议
+
+| 文件 | 新/改 | 内容 |
+| --- | --- | --- |
+| `protocol/print-mesh.schema.json` | 新 | 正式化 §4（faces/edges/`partial`/`failed_faces`，**无 per-asset origin** 🆕）；`asset.path` 相对 assets/ 契约 🆕 |
+| `protocol/session.schema.json` | 改 | manifest 增 `local_origin` |
+| `protocol/event.schema.json` | 改 🆕 | `update` 对不存在 id 由消费端降级（M2-16，文档约定） |
+
+### D. PRINT — viewer 渲染层
+
+| 文件 | 新/改 | 内容 |
+| --- | --- | --- |
+| `viewer/src/rendering/RendererRegistry.ts` | 改 | 异步 renderer 接口（返回 `Object3D \| Promise`） |
+| `viewer/src/rendering/SceneController.ts` | 改 | 占位→替换；pending 取消；mesh dispose；**按 face_id/edge_id 拾取到子对象** 🆕 |
+| `viewer/src/rendering/renderers/meshRenderer.ts` | 新 | 取 `/assets/<print-mesh>`→每面 BufferGeometry(Uint32 🆕)+边 LineSegments；**减会话 `local_origin`** 🆕；`DoubleSide`(开放壳) 🆕；tag face_id |
+| `viewer/src/rendering/assets/assetCache.ts` | 新 | 按 path/sha256 缓存去重；404 退避兜底 |
+
+### E. PRINT — viewer 状态/会话/UI
+
+| 文件 | 新/改 | 内容 |
+| --- | --- | --- |
+| `viewer/src/core/protocol/types.ts` | 改 | print-mesh/asset 类型、`local_origin` |
+| `viewer/src/core/session/sessionStore.ts` | 新 | 会话元信息（`local_origin`/unit），供 renderer 偏移 |
+| `viewer/src/core/scene-store/store.ts` | 改 🆕 | 增 `selectedFaceId`/`selectedEdgeId` 子选择（M2-15）；`reduceScene` update-miss 降级 🆕 |
+| `viewer/src/core/bridge/useBridgeStream.ts` | 改 | 拉 manifest 取 `local_origin` |
+| `viewer/src/features/inspector/Inspector.tsx` | 改 | 显示选中 face/edge 的 topology_ref + 资产状态（加载中/已加载/404/partial 🆕） |
+| `viewer/src/features/viewport/Viewport3D.tsx` | 改 | 资产几何 NaN/Inf 兜底（D4） |
+| `viewer/src/core/bridge/sseClient.ts` | 改 | 重连退避+终态（D3）、StrictMode 抑制（D1） |
+
+### F. PRINT — Bridge
+
+| 文件 | 新/改 | 内容 |
+| --- | --- | --- |
+| `bridge/bridge.py` | 改 | `/session` 返回 manifest；大资产 `Range`/流式；`.mesh.json` mime |
+
+### 实施顺序（5 阶段，可独立验收）
+
+1. **协议先行**：print-mesh.schema + types + session `local_origin`。
+2. **occ-debug-mesh（C++）**：含分派/鲁棒/世界坐标——用静态 BREP（含**故意坏的** 🆕）离线验收，不依赖 LLDB。
+3. **viewer 异步渲染 + 子面选择**：喂阶段 2 样例资产，浏览器看 shape/face、点选面。
+4. **占位→升级链路**：daemon（独立 run_id 命名空间）追加 update + viewer 升级。
+5. **真采集**：occdbg + baseline + F5 + bootstrap，替掉假生产者。
+
+> 地基仍是**阶段 2**，且新增"**坏 shape 测试夹具**"作为它的核心验收项。
+
+## 8. 深挖的漏洞与修复
+
+severity：🔴 阻塞 ｜ 🟠 重要 ｜ 🟡 次要。下表为本轮 review 对 §7 清单与相关文档的修补。
+
+| # | 漏洞 | 原清单的问题 | 修复 | 落点 |
+| --- | --- | --- | --- | --- |
+| 🔴 V1 | **多写者 seq 权威**（M2-12） | events.ndjson 被 occdbg/Capture/daemon 三家追加，同 run_id 的 seq 无法各自独立单调 | daemon 的 update 用**独立 run_id 命名空间 `run-NNNN/mesh`**，reducer 各自跟踪 lastSeqByRun、update 仍按 id 命中——免跨进程 seq 锁 | occ-mesh-daemon.py / reducer |
+| 🔴 V2 | **坏 shape 网格化**（M2-13） | M2 输入常是 fillet 失败的非法/开放/自交 shape，BRepMesh 可能卡死/崩 | 每面 try/catch + **超时看门狗** + 跳过并标 `partial`/`failed_faces` | occ-debug-mesh Robust.cxx；print-mesh schema |
+| 🔴 V3 | **§4 origin 自相矛盾** | linkage §4 写 per-asset `local_origin`，M2-6 又定会话级单一 origin | print-mesh **世界 double、无 per-asset origin**；唯一 origin 在 manifest，viewer 降 Float32 前减一次；occ-debug-mesh 不再需要 origin | linkage §4（已改）/ M2-6 |
+| 🔴 V4 | **裸 Edge/Wire 输入**（M2-14） | fillet 输入本就是边，以面为中心的 mesher 产不出 | 按顶层类型分派：Edge/Wire→edges、Vertex→点 | occ-debug-mesh ShapeDispatch.cxx |
+| 🟠 V5 | **缺子面选择**（M2-15） | M2-5 选面是核心价值，但 store 只有实体级 `selectedId` | store 增 `selectedFaceId`/`selectedEdgeId`，拾取/Inspector 接子面 | store / SceneController / Inspector |
+| 🟠 V6 | **update vs remove 竞态**（M2-16） | daemon 网格化耗时，期间实体可能被 remove/clear → update 命中空 | reducer 把"update 不存在 id"降为低级诊断（已有诊断，仅调级别） | reducer / event 文档约定 |
+| 🟠 V7 | **asset.path 契约缺失** | 路径相对谁、是否带前导 / 未定 | 相对 `<session>/assets/`、无前导 `/`、映射 `/assets/<path>`；sha256 由 mesher 算 | linkage §4（已补）/ print-mesh schema |
+| 🟠 V8 | **daemon 找不到 mesher** | 守护进程怎么定位 occ-debug-mesh 二进制 | env `OCC_DEBUG_MESH_BIN`（默认指向构建输出） | occ-mesh-daemon.py / bootstrap |
+| 🟡 V9 | **开放壳/镜像渲染** | 开放壳背面不可见、镜像 Location 绕序错 | mesher 镜像翻绕序；meshRenderer 面材质 `DoubleSide` | occ-debug-mesh / meshRenderer |
+| 🟡 V10 | **surfdata 范围越界**（M2-17） | occdbg 命令集列了 surfdata，但它需 TKFillet 适配器、与 capture 禁链冲突 | surfdata 明确**划入 M3**，M2 不含 | lldb 文档 / occdbg 命令集 |
