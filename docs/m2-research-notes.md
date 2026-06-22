@@ -227,6 +227,7 @@ viewer(M2-1 A): add 时显示占位 ──收到 update──► fetch print-mes
 - [ ] M2-15：store 增 `selectedFaceId`/`selectedEdgeId`，拾取与 Inspector 接子面
 - [ ] M2-16：reducer 容忍"update 不存在 id"降级为低级诊断（mesh-ready 竞态）
 - [ ] M2-17：surfdata 划入 M3；M2 的 occdbg 命令集不含 surfdata
+- [ ] §9 缺陷诊断层：M2 落 BRepCheck 几何缺陷（`defect` kind + 配色高亮 + 缺陷面板）；ChFi3d 算法状态留 M3
 
 ## 7. 实施清单（修订版，已并入 §8 漏洞修复）
 
@@ -315,3 +316,65 @@ severity：🔴 阻塞 ｜ 🟠 重要 ｜ 🟡 次要。下表为本轮 review 
 | 🟠 V8 | **daemon 找不到 mesher** | 守护进程怎么定位 occ-debug-mesh 二进制 | env `OCC_DEBUG_MESH_BIN`（默认指向构建输出） | occ-mesh-daemon.py / bootstrap |
 | 🟡 V9 | **开放壳/镜像渲染** | 开放壳背面不可见、镜像 Location 绕序错 | mesher 镜像翻绕序；meshRenderer 面材质 `DoubleSide` | occ-debug-mesh / meshRenderer |
 | 🟡 V10 | **surfdata 范围越界**（M2-17） | occdbg 命令集列了 surfdata，但它需 TKFillet 适配器、与 capture 禁链冲突 | surfdata 明确**划入 M3**，M2 不含 | lldb 文档 / occdbg 命令集 |
+
+## 9. 缺陷诊断层（V2 升级：从"别崩"到"诊断"）
+
+> 把"坏几何"从健壮性负担升级为**一等诊断特性**——从坏的形态 + 算法自报状态反推病因。复用基础见 §0.4（DRAW `checkshape`/`bopcheck`）。
+
+### 9.1 双源融合
+
+两路诊断叠在同一场景：
+
+1. **几何缺陷**：对抓到的 shape 跑 `BRepCheck_Analyzer`（= DRAW `checkshape`），按子形状取缺陷码（自交/非闭合/退化/pcurve 错…）；自交/干涉再用 `BRepAlgoAPI_Check`（= `bopcheck`）。
+2. **算法失败状态**：对 fillet 读 `ChFi3d_Builder` 的 `WalkingFailure`/`TwistedSurface` + 失败的 contour/vertex。
+
+→ 融合后高亮在几何上，工程师看一眼"形 + 因"即可反推。
+
+### 9.2 协议：`defect` 标记
+
+新增几何 kind `defect`（加入 enum）。一个 defect 实体：
+
+```jsonc
+{
+  "op": "add", "kind": "defect",
+  "id": "fillet/defect/self-intersection-1",
+  "group": "fillet/defects",
+  "geometry": { "position": [x, y, z] },   // 或 polyline(坏边) / 省略(仅 ref 子形状)
+  "defect": {
+    "category": "self_intersection",        // self_intersection|open_boundary|twisted_surface|degenerate|non_manifold|invalid_pcurve|walking_failure
+    "source": "brepcheck",                  // brepcheck|bopcheck|chfi3d
+    "status": "BRepCheck_SelfIntersectingWire",  // 原始状态码
+    "severity": "error",                    // error|warning
+    "message": "wire 自交于该点",
+    "ref": { "entity_id": "...", "face_id": "F3", "edge_id": "E7" }  // 可选：指向坏子形状
+  }
+}
+```
+
+- defect 走现有 add/update/remove 管线（复用 Solo/Focus/Inspector）。
+- viewer 按 `category` 配色：自交=红、开口=橙、扭曲=紫、退化=黄、非流形=品红、走线失败=× 标记。
+
+### 9.3 生产端
+
+- occ-debug-mesh/capture：抓 shape 后跑 `BRepCheck_Analyzer`，遍历缺陷子形状 → 发 defect 事件（带 face_id/edge_id ref）。`BRepCheck` 在低层 `TKTopAlgo`，**不碰 TKFillet**。
+- occdbg fillet 钩子（M3）：读 ChFi3d 失败状态 + 失败 contour/vertex → 发 defect 事件。
+- BRepCheck 对垃圾 shape 自身可能慢/抛 → 同 V2 的 try/catch + 超时包裹。
+
+### 9.4 viewer
+
+缺陷配色表 + 图例；新"缺陷"面板列出本会话 defects，点击 focus + 高亮 ref 子形状；Inspector 显示 category/source/status/message。
+
+### 9.5 落地（在 §7 之上增量）
+
+| 文件 | 新/改 | 内容 |
+| --- | --- | --- |
+| `protocol/event.schema.json` | 改 | kind 加 `defect`、$defs 加 `defect` 块 |
+| `tools/occ-debug-mesh/src/Diagnose.cxx` | 新 | `BRepCheck_Analyzer` 遍历 → defect 事件（链 `TKTopAlgo`） |
+| `viewer/src/rendering/renderers/defectRenderer.ts` | 新 | 按 category 配色标记 |
+| `viewer/src/features/defects/DefectPanel.tsx` | 新 | 缺陷列表 + 点击 focus/高亮 |
+| `viewer/src/core/scene-store/store.ts` | 改 | defect 选择/高亮 ref 子形状 |
+
+### 9.6 分期
+
+- **M2**：BRepCheck 几何缺陷（自交/开口/退化/非流形）+ 配色高亮 + 缺陷面板——不依赖 TKFillet，先落。
+- **M3**：ChFi3d 算法状态（WalkingFailure/TwistedSurface + 失败 contour）——需 TKFillet 适配层（接 M2-17/surfdata）。
