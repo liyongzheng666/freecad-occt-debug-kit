@@ -7,6 +7,64 @@
 
 本笔记汇总 M2 的风险全景、M2-1/2/3 的白话解释与**技术选型候选**、以及 M2-4/5/6/7 的几何域调研。**本笔记不下最终决议**——选型在消化后单独进行。
 
+## 0. 先例：OCCT DRAW Test Harness（同类工具 + 可复用清单）
+
+> DRAW 是 OCCT 官方自带、内核开发者调几何 bug 的标准工具。它**印证了本项目的方向**，且有大量可直接复用之处。本节是设计依据的背景记录。
+
+### 0.1 它是什么
+
+TCL 命令行 + X11/OpenGL 3D 窗口，全靠打字。典型会话：
+
+```tcl
+DRAWEXE ; pload MODELING
+box b 10 20 30                  # 造盒子（自动显示）
+blend r b 2 ...                 # 半径 2 倒圆角
+vinit; vdisplay r; vfit; vaxo   # 显示
+checkshape r                    # 体检：报哪里不合法
+bopcheck r                      # 布尔/干涉检查
+save r r.brep ; restore r.brep r2
+```
+
+### 0.2 关键招式：断点处抓中间几何（与 occdbg 同源）
+
+停在 lldb/gdb、手里有 `TopoDS_Shape` 时直接调：
+
+```cpp
+BRepTools_Write("/tmp/bad.brep", &myShape)   // 存 BREP
+DBRep_Set("bad", &myShape)                   // 塞进 DRAW 变量
+Draw_Eval("donly bad; axo; fit")             // 画出来
+```
+
+这正是 `occdbg shape ... -- myShape` 的"祖宗"——不改源码、不重编译，在断点处看中间态。我们把它产品化：自动存 BREP、推浏览器、带分组/坐标/拓扑/源码上下文。
+
+### 0.3 为什么不直接用 DRAW
+
+| 维度 | OCCT DRAW | 本项目 Print |
+| --- | --- | --- |
+| 界面 | TCL 打字 + X11 老视图 | 浏览器 web，鼠标交互 |
+| 场景 | 一次一个快照、手动重敲 | 增量会话（add/update/clear 流式） |
+| 上下文 | 只有裸几何 | FreeCAD 对象/element + 源码位置 + 分组 |
+| 失败诊断 | `checkshape`/`bopcheck` 纯文字 | 缺陷配色高亮叠在几何上（V2 升级） |
+| 给谁用 | 单个内核开发者 | 人 + Agent（结构化 NDJSON、右键发送） |
+| 复现/协作 | 难 | 会话可存/回放/分享 |
+
+### 0.4 优秀 / 可借鉴 / 可复用清单（本节重点）
+
+| DRAW 能力 | 背后机制 | 我们如何复用 / 借鉴 |
+| --- | --- | --- |
+| 断点存几何 | `BRepTools_Write` / `DBRep_Set` / `Draw_Eval` | occdbg C ABI（`OccDebug_EmitShape` 等）照此三步设计；BREP 直接复用 `BRepTools::Write` |
+| `checkshape` | `BRepCheck_Analyzer`（按子形状报缺陷码） | **V2 缺陷诊断层的现成引擎**，直接调、不重造 |
+| `bopcheck` | `BRepAlgoAPI_Check` | 自交/干涉缺陷检测复用 |
+| `save`/`restore .brep` | BREP 为权威交换格式 | 印证"BREP 权威、mesh 仅派生"的决策 |
+| `explode` + 子形状索引名（`b_1,b_2`） | `TopExp` 子形状编号 | **M2-5 的 face_id/edge_id 同源**（MapShapes 索引） |
+| `donly` / `fit` | 只显示这个 / 铺满 | 已对应我们的 **Solo / Focus** |
+| `nbshapes` / `whatis` / `dump` | 计数 / 类型 / 属性转储 | Inspector 的信息项来源 |
+| TCL 脚本可回放 | 命令序列即脚本 | 会话回放 + **Agent 断点自动采集（batch）** |
+
+### 0.5 不复用什么（反面参照）
+
+TCL/X11 古老 UX、单快照模型、纯文字诊断、零上下文、单用户——这些正是我们用 web + 增量会话 + 配色诊断 + FreeCAD 上下文 + Agent 协议要**超越**的点。
+
 ## 1. M2 风险全景
 
 severity：🔴 架构/正确性阻塞 ｜ 🟠 需在实现中定 ｜ 🟡 打磨 ｜ ⚪ 已知小项
@@ -146,6 +204,13 @@ viewer(M2-1 A): add 时显示占位 ──收到 update──► fetch print-mes
 - [OCCT Mesh User Guide](https://dev.opencascade.org/doc/overview/html/occt_user_guides__mesh.html)
 - [BRepMesh_IncrementalMesh Reference](https://dev.opencascade.org/doc/refman/html/class_b_rep_mesh___incremental_mesh.html)
 - [BRepMesh intro (Unlimited3D)](https://unlimited3d.wordpress.com/2024/03/17/brepmesh-intro/)
+
+**DRAW / 调试工具与缺陷检查**
+- [OCCT DRAW Test Harness 用户指南](https://dev.opencascade.org/doc/overview/html/occt_user_guides__test_harness.html)
+- [OCCT Debugging tools & hints（断点存中间对象）](https://dev.opencascade.org/doc/overview/html/occt__debug.html)
+- [BRepCheck_Analyzer 参考](https://dev.opencascade.org/doc/refman/html/class_b_rep_check___analyzer.html)
+- [BRepAlgoAPI_Check (bopcheck)](https://dev.opencascade.org/doc/refman/html/class_b_rep_algo_a_p_i___check.html)
+- [ChFi3d_Builder（圆角失败状态）](https://dev.opencascade.org/doc/refman/html/class_ch_fi3d___builder.html)
 
 ## 6. 待决策清单（下次技术选型的输入）
 
