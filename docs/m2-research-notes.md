@@ -379,3 +379,20 @@ severity：🔴 阻塞 ｜ 🟠 重要 ｜ 🟡 次要。下表为本轮 review 
 
 - **M2**：BRepCheck 几何缺陷（自交/开口/退化/非流形）+ 配色高亮 + 缺陷面板——不依赖 TKFillet，先落。
 - **M3**：ChFi3d 算法状态（WalkingFailure/TwistedSurface + 失败 contour）——需 TKFillet 适配层（接 M2-17/surfdata）。
+
+## 10. 锁定 M2-1/2/3 后的二次排查（N1–N8）
+
+> 对已敲定的 A/B/A 组合再排查一轮。结论：**无新增阻塞阶段 1-2 的问题**；N1–N8 全部落在阶段 3-5，已记录为契约/任务。
+
+| # | 问题 | 影响阶段 | 修复 / 契约 |
+| --- | --- | --- | --- |
+| 🔴 N1 | `SceneController.sync` 每次 store 变化都**无条件重建对象** → mesh 会被反复重新下载（选中/高亮/可见性变化都触发） | 3 | sync 改**增量**：按渲染相关字段(kind/geometry/asset)是否变化决定是否重建，未变跳过。**M2-1 真正的工作量大头** |
+| 🔴 N2 | daemon 不知道 `.brep` 属于哪个实体 → 发不出正确的 update | 4 | 约定 **BREP 文件名 = 实体 id（消毒）**，或 occdbg 写 sidecar `<brep>.meta.json` 记 `{entity_id, run_id, group}` |
+| 🔴 N3 | 占位需 bbox：viewer **画不了 occt-brep**，add 必须带世界坐标 bbox 当占位 | 协议/2/5 | occdbg 抓 shape 时算 `Bnd_Box` 写进 add（geometry/metadata）。便宜，现在定 |
+| 🟠 N4 | 多写者**字节交错**：occdbg+daemon 并发 append，POSIX 仅对 <PIPE_BUF(~4KB) 的 O_APPEND 写保证原子，超长行可能交错损坏 | 4-5 | ①事件行保持短（资产走引用，已是）②append 走 `flock`。V1 只解了序号撞车，这是字节层 |
+| 🟠 N5 | 异步**陈旧结果**：mesh 下载未回，asset 又被 update / 实体被删 → 旧结果晚到塞上 | 3 | 每实体一个 load generation token，按 `(entityId, sha256)` 作废过期下载 |
+| 🟠 N6 | 两段式**失败路径**未定：网格化失败 daemon 发什么 | 4 | partial→update 带部分网格+defect；全败→note(capture_failure)+保留占位+标"mesh 失败" |
+| 🟡 N7 | daemon **生命周期**：起/杀/崩溃发现/重启/日志 | 4-5 | occ-debug-start.sh 补 PID/健康，崩溃可见 |
+| 🟡 N8 | 回放**并发下载风暴**：viewer 连上回放整段，每 shape 都 fetch | 3 | assetCache 加并发上限 |
+
+**就绪结论**：阶段 1（协议）+ 阶段 2（occ-debug-mesh + BRepCheck）**可立即开干**——N1–N8 不挡，且 N2/N3 这两个便宜契约现在就写进协议草案，阶段 2 才不会漏掉 bbox 与命名约定。
