@@ -386,9 +386,9 @@ severity：🔴 阻塞 ｜ 🟠 重要 ｜ 🟡 次要。下表为本轮 review 
 
 | # | 问题 | 影响阶段 | 修复 / 契约 |
 | --- | --- | --- | --- |
-| 🔴 N1 | `SceneController.sync` 每次 store 变化都**无条件重建对象** → mesh 会被反复重新下载（选中/高亮/可见性变化都触发） | 3 | sync 改**增量**：按渲染相关字段(kind/geometry/asset)是否变化决定是否重建，未变跳过。**M2-1 真正的工作量大头** |
-| 🔴 N2 | daemon 不知道 `.brep` 属于哪个实体 → 发不出正确的 update | 4 | 约定 **BREP 文件名 = 实体 id（消毒）**，或 occdbg 写 sidecar `<brep>.meta.json` 记 `{entity_id, run_id, group}` |
-| 🔴 N3 | 占位需 bbox：viewer **画不了 occt-brep**，add 必须带世界坐标 bbox 当占位 | 协议/2/5 | occdbg 抓 shape 时算 `Bnd_Box` 写进 add（geometry/metadata）。便宜，现在定 |
+| ✅ N1 | `SceneController.sync` 每次 store 变化都**无条件重建对象** → mesh 会被反复重下 | 3 | **已定**：sync 按 `signature=JSON(kind/geometry/asset/style)` 增量重建，未变跳过；**可见性改 `.visible` 开关**（Viewport3D 传全部实体+可见集，不预过滤）→ 隐藏不重下；assetCache 按 sha256 兜底。无残留隐患 |
+| ✅ N2 | daemon 不知道 `.brep` 属于哪个实体 → 发不出正确 update | 4 | **已定**：occdbg 写 sidecar `<x>.meta.json`（`{entity_id,run_id,group,brep,mesh}`）后**原子 rename** `<x>.brep.tmp→<x>.brep`；daemon 只听 `*.brep`、读 sidecar 定目标。不用文件名当 id（免碰撞/读半成品竞态） |
+| ✅ N3 | 占位需 bbox：viewer **画不了 occt-brep**，add 必须带世界坐标 bbox | 协议/2/5 | **已定**：shape 全程 `kind:"shape"`，add 带 `Bnd_Box` 世界 bbox；renderer 有 print-mesh 画网格、否则画 bbox（顺带做 N6 网格化全败的永久兜底） |
 | 🟠 N4 | 多写者**字节交错**：occdbg+daemon 并发 append，POSIX 仅对 <PIPE_BUF(~4KB) 的 O_APPEND 写保证原子，超长行可能交错损坏 | 4-5 | ①事件行保持短（资产走引用，已是）②append 走 `flock`。V1 只解了序号撞车，这是字节层 |
 | 🟠 N5 | 异步**陈旧结果**：mesh 下载未回，asset 又被 update / 实体被删 → 旧结果晚到塞上 | 3 | 每实体一个 load generation token，按 `(entityId, sha256)` 作废过期下载 |
 | 🟠 N6 | 两段式**失败路径**未定：网格化失败 daemon 发什么 | 4 | partial→update 带部分网格+defect；全败→note(capture_failure)+保留占位+标"mesh 失败" |
