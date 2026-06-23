@@ -51,3 +51,14 @@
 | `event.schema.json` 加 `defect` kind + payload | §9 缺陷诊断层的协议载体（category/source/severity/ref） |
 | `session.schema.json` 加 `local_origin` | M2-6：会话级单一原点，viewer 降 Float32 前减 |
 | `types.ts` 增 defect / PrintMesh / SessionInfo 类型 | 两端类型对齐，typecheck 守住契约 |
+
+## 7. M2 阶段 2：occ-debug-mesh 决策（已确认，对照 OCCT 自身做法）
+
+| 点 | 决策 | 依据 |
+| --- | --- | --- |
+| deflection | OCCT **相对挠度，系数 0.002**，角 **0.5 rad**（钳 ≥0.2），parallel | OCCT 默认 DeviationCoefficient 0.001 / Angle 0.5，为调试快放粗一档 |
+| 法线 | 缺时调 **`BRepLib_ToolTriangulatedShape::ComputeNormals`**（同 AIS_Shape），按 `REVERSED`/镜像翻向 | OCCT 自带、跨光滑边平滑，不手搓 |
+| 缺陷遍历 | `TopExp::MapShapes` 子形状 → `BRepCheck_Analyzer.Result(sub)` → 遍历 `BRepCheck_ListOfStatus`，状态码→`defect.category` | `BRepCheck_Result` 嵌套 map 结构；MapShapes 索引即 face/edge_id |
+| 边离散 | 面上边复用 `Poly_PolygonOnTriangulation`；裸 Edge/Wire 用 `GCPnts_QuasiUniformDeflection` | 前者 mesh-依赖且与面网格重合，后者独立、无需网格（接 V4） |
+
+> Pre-flight：OCCT V7_8_1 已建（occt/install/debug，cmake 包在 occt/build/debug），上述全部头文件+方法签名在 7.8.1 确认存在；Poly_Triangulation 用 1-based `Node(i)`/`Triangle(i)`/`Normal(i)` 新 API；编译器用 pixi clang 18。
