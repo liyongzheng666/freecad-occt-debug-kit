@@ -31,6 +31,7 @@
 #include <gp_Pnt.hxx>
 #include <gp_Trsf.hxx>
 
+#include <cmath>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -45,6 +46,7 @@ constexpr double kRelativeCoefficient = 0.002;  // ~2x coarser than OCCT default
 constexpr double kAngularDeflection = 0.5;       // = OCCT default Angle; clamped >= 0.2
 
 std::string fmt(double v) {
+  if (!std::isfinite(v)) return "0";  // last-resort guard so output stays valid JSON (D4)
   std::ostringstream s;
   s << std::setprecision(9) << v;  // doubles on the wire; viewer subtracts session origin
   return s.str();
@@ -95,6 +97,9 @@ bool meshFace(const TopoDS_Face& face, const std::string& faceId, FaceMesh& out)
 
   for (Standard_Integer i = 1; i <= tri->NbNodes(); ++i) {
     const gp_Pnt p = tri->Node(i).Transformed(trsf);
+    if (!std::isfinite(p.X()) || !std::isfinite(p.Y()) || !std::isfinite(p.Z())) {
+      return false;  // degenerate node -> treat the whole face as unmeshable (V2/D4)
+    }
     out.positions.push_back(p.X());
     out.positions.push_back(p.Y());
     out.positions.push_back(p.Z());
@@ -132,10 +137,11 @@ int convert(const std::string& inPath, const std::string& outPath) {
   }
 
   // Relative deflection: linDefl acts as a coefficient of edge size (OCCT
-  // semantics); parallel meshing. Broken faces are skipped, not fatal (V2).
+  // semantics); parallel meshing. The parameterized constructor performs the
+  // meshing in place; broken faces are skipped (not fatal) below (V2).
   BRepMesh_IncrementalMesh mesher(shape, kRelativeCoefficient, Standard_True,
                                   kAngularDeflection, Standard_True);
-  mesher.Perform();
+  (void)mesher;
 
   TopTools_IndexedMapOfShape faces;
   TopExp::MapShapes(shape, TopAbs_FACE, faces);
