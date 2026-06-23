@@ -62,3 +62,12 @@
 | 边离散 | 面上边复用 `Poly_PolygonOnTriangulation`；裸 Edge/Wire 用 `GCPnts_QuasiUniformDeflection` | 前者 mesh-依赖且与面网格重合，后者独立、无需网格（接 V4） |
 
 > Pre-flight：OCCT V7_8_1 已建（occt/install/debug，cmake 包在 occt/build/debug），上述全部头文件+方法签名在 7.8.1 确认存在；Poly_Triangulation 用 1-based `Node(i)`/`Triangle(i)`/`Normal(i)` 新 API；编译器用 pixi clang 18。
+
+## 8. occ-debug-mesh 实现进度
+
+| 改动 | 目的 |
+| --- | --- |
+| occ-debug-mesh 骨架 + CMake + 构建脚本 | 证明工具链：链本地 OCCT、读 BREP→网格化→per-face 世界坐标 JSON。盒子自测 6 面、bbox 精确 |
+| review 修复（去冗余 Perform、NaN/Inf 守卫、退化节点→failed_faces） | 健壮性；盒子 6 面法线实测外向（REVERSED 翻转正确） |
+| **缺陷遍历**（`BRepCheck_Analyzer` → `defect` sidecar） | 把工具从"查看器"变"诊断器"：检出哪类缺陷+ref。**关键**：缺陷常存"子形状在父语境下"的 context 状态里，不能只看 `Status()`、不能用 `IsValid(sub)` 门控 |
+| `defect.category` 加 `other`；`--diagnose`/`--make-test-bad` 工具 | BRepCheck ~50 状态码只映射常见的、其余落 other 不丢；开口盒子(NotClosed→open_boundary)离线验收 |

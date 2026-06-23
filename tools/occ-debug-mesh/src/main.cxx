@@ -14,10 +14,19 @@
 // =====================================================================
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
+#include <BRepBuilderAPI_MakeSolid.hxx>
+#include <BRepCheck_Analyzer.hxx>
+#include <BRepCheck_ListOfStatus.hxx>
+#include <BRepCheck_Result.hxx>
+#include <BRepCheck_Status.hxx>
 #include <BRepLib_ToolTriangulatedShape.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepTools.hxx>
+#include <Standard_Failure.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopoDS_Shell.hxx>
+#include <TopoDS_Solid.hxx>
 #include <Poly_Triangle.hxx>
 #include <Poly_Triangulation.hxx>
 #include <TopAbs_Orientation.hxx>
@@ -35,6 +44,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -128,6 +138,121 @@ bool meshFace(const TopoDS_Face& face, const std::string& faceId, FaceMesh& out)
   return true;
 }
 
+// ---- defect diagnosis (BRepCheck_Analyzer = DRAW checkshape; §9) -----------
+struct Defect {
+  std::string category;  // -> defect.category
+  std::string status;    // raw BRepCheck status name
+  std::string faceId;    // ref (one of these set, or neither)
+  std::string edgeId;
+};
+
+const char* statusName(BRepCheck_Status s) {
+  switch (s) {
+    case BRepCheck_NoError: return "NoError";
+    case BRepCheck_SelfIntersectingWire: return "SelfIntersectingWire";
+    case BRepCheck_IntersectingWires: return "IntersectingWires";
+    case BRepCheck_NotClosed: return "NotClosed";
+    case BRepCheck_InvalidCurveOnSurface: return "InvalidCurveOnSurface";
+    case BRepCheck_InvalidCurveOnClosedSurface: return "InvalidCurveOnClosedSurface";
+    case BRepCheck_NoCurveOnSurface: return "NoCurveOnSurface";
+    case BRepCheck_InvalidDegeneratedFlag: return "InvalidDegeneratedFlag";
+    case BRepCheck_NotConnected: return "NotConnected";
+    case BRepCheck_BadOrientation: return "BadOrientation";
+    case BRepCheck_BadOrientationOfSubshape: return "BadOrientationOfSubshape";
+    default: return "Other";
+  }
+}
+
+// BRepCheck status -> our defect.category (docs/change-log.md §7; unmapped -> other).
+std::string statusCategory(BRepCheck_Status s) {
+  switch (s) {
+    case BRepCheck_SelfIntersectingWire:
+    case BRepCheck_IntersectingWires:
+      return "self_intersection";
+    case BRepCheck_NotClosed:
+      return "open_boundary";
+    case BRepCheck_InvalidCurveOnSurface:
+    case BRepCheck_InvalidCurveOnClosedSurface:
+    case BRepCheck_NoCurveOnSurface:
+      return "invalid_pcurve";
+    case BRepCheck_InvalidDegeneratedFlag:
+      return "degenerate";
+    default:
+      return "other";
+  }
+}
+
+void collectInto(const BRepCheck_Analyzer& an, const TopoDS_Shape& sub,
+                 const std::string& faceId, const std::string& edgeId,
+                 std::set<std::string>& seen, std::vector<Defect>& out) {
+  // Do NOT gate on IsValid(sub): a subshape can be valid standalone yet carry
+  // a defect "in context" of its parent (e.g. a shell that is NotClosed within
+  // its solid). Walk both the standalone status list and every context list.
+  const Handle(BRepCheck_Result)& res = an.Result(sub);
+  if (res.IsNull()) return;
+  auto take = [&](const BRepCheck_ListOfStatus& list) {
+    for (BRepCheck_ListOfStatus::Iterator it(list); it.More(); it.Next()) {
+      const BRepCheck_Status st = it.Value();
+      if (st == BRepCheck_NoError) continue;
+      std::string key = std::string(statusName(st)) + "|" + faceId + "|" + edgeId;
+      if (!seen.insert(key).second) continue;  // dedup across levels
+      out.push_back({statusCategory(st), statusName(st), faceId, edgeId});
+    }
+  };
+  take(res->Status());
+  for (res->InitContextIterator(); res->MoreShapeInContext(); res->NextShapeInContext()) {
+    take(res->StatusOnShape());
+  }
+}
+
+std::vector<Defect> collectDefects(const TopoDS_Shape& shape,
+                                   const TopTools_IndexedMapOfShape& faceMap,
+                                   const TopTools_IndexedMapOfShape& edgeMap) {
+  std::vector<Defect> out;
+  std::set<std::string> seen;
+  try {
+    BRepCheck_Analyzer an(shape);
+    if (an.IsValid()) return out;  // clean shape -> no defects
+    for (Standard_Integer i = 1; i <= faceMap.Extent(); ++i) {
+      collectInto(an, faceMap.FindKey(i), "F" + std::to_string(i), "", seen, out);
+    }
+    for (Standard_Integer i = 1; i <= edgeMap.Extent(); ++i) {
+      collectInto(an, edgeMap.FindKey(i), "", "E" + std::to_string(i), seen, out);
+    }
+    // Shell/solid/wire-level defects (e.g. NotClosed) have no face/edge id.
+    for (TopAbs_ShapeEnum type : {TopAbs_SOLID, TopAbs_SHELL, TopAbs_WIRE}) {
+      TopTools_IndexedMapOfShape m;
+      TopExp::MapShapes(shape, type, m);
+      for (Standard_Integer i = 1; i <= m.Extent(); ++i) {
+        collectInto(an, m.FindKey(i), "", "", seen, out);
+      }
+    }
+  } catch (const Standard_Failure& e) {
+    std::cerr << "[occ-debug-mesh] BRepCheck failed: " << e.GetMessageString() << "\n";
+  }
+  return out;
+}
+
+void writeDefects(const std::string& path, const std::vector<Defect>& defects) {
+  std::ofstream out(path);
+  if (!out) return;
+  out << "[";
+  for (size_t i = 0; i < defects.size(); ++i) {
+    const Defect& d = defects[i];
+    out << (i ? "," : "") << "\n  { \"category\": \"" << d.category
+        << "\", \"source\": \"brepcheck\", \"severity\": \"error\", \"status\": \"BRepCheck_"
+        << d.status << "\"";
+    if (!d.faceId.empty() || !d.edgeId.empty()) {
+      out << ", \"ref\": {";
+      if (!d.faceId.empty()) out << " \"face_id\": \"" << d.faceId << "\"";
+      if (!d.edgeId.empty()) out << (d.faceId.empty() ? " " : ", ") << "\"edge_id\": \"" << d.edgeId << "\"";
+      out << " }";
+    }
+    out << " }";
+  }
+  out << (defects.empty() ? "]\n" : "\n]\n");
+}
+
 int convert(const std::string& inPath, const std::string& outPath) {
   TopoDS_Shape shape;
   BRep_Builder builder;
@@ -145,6 +270,11 @@ int convert(const std::string& inPath, const std::string& outPath) {
 
   TopTools_IndexedMapOfShape faces;
   TopExp::MapShapes(shape, TopAbs_FACE, faces);
+  TopTools_IndexedMapOfShape edges;
+  TopExp::MapShapes(shape, TopAbs_EDGE, edges);
+
+  // Diagnose defects (face/edge ids share the same maps -> refs line up, M2-5).
+  const std::vector<Defect> defects = collectDefects(shape, faces, edges);
 
   std::vector<FaceMesh> meshes;
   std::vector<std::string> failed;
@@ -185,8 +315,20 @@ int convert(const std::string& inPath, const std::string& outPath) {
   }
   out << "  ],\n  \"edges\": []\n}\n";
 
+  // Defects go to a sidecar (they are `defect` events, not mesh geometry; the
+  // daemon turns them into events with entity_id filled in).
+  std::string base = outPath;
+  const std::string suffix = ".mesh.json";
+  if (base.size() > suffix.size() &&
+      base.compare(base.size() - suffix.size(), suffix.size(), suffix) == 0) {
+    base = base.substr(0, base.size() - suffix.size());
+  }
+  const std::string defectsPath = base + ".defects.json";
+  writeDefects(defectsPath, defects);
+
   std::cerr << "[occ-debug-mesh] " << inPath << " -> " << outPath << ": "
-            << meshes.size() << " faces, " << failed.size() << " failed\n";
+            << meshes.size() << " faces, " << failed.size() << " failed, "
+            << defects.size() << " defects\n";
   return 0;
 }
 
@@ -200,15 +342,79 @@ int makeTestBox(const std::string& outPath) {
   return 0;
 }
 
+// A deliberately invalid shape: a box with one face removed, wrapped as a
+// solid -> BRepCheck reports the shell is NotClosed (open_boundary).
+int makeTestBad(const std::string& outPath) {
+  TopoDS_Shape box = BRepPrimAPI_MakeBox(10.0, 20.0, 30.0).Shape();
+  BRep_Builder builder;
+  TopoDS_Shell shell;
+  builder.MakeShell(shell);
+  Standard_Integer idx = 0;
+  for (TopExp_Explorer ex(box, TopAbs_FACE); ex.More(); ex.Next()) {
+    if (idx++ == 0) continue;  // drop one face -> open shell
+    builder.Add(shell, ex.Current());
+  }
+  TopoDS_Solid solid = BRepBuilderAPI_MakeSolid(shell).Solid();
+  if (!BRepTools::Write(solid, outPath.c_str())) {
+    std::cerr << "[occ-debug-mesh] failed to write bad shape: " << outPath << "\n";
+    return 2;
+  }
+  std::cerr << "[occ-debug-mesh] wrote open (invalid) box -> " << outPath << "\n";
+  return 0;
+}
+
+// Dump what BRepCheck_Analyzer reports for every subshape — debugging aid.
+int diagnose(const std::string& inPath) {
+  TopoDS_Shape shape;
+  BRep_Builder builder;
+  if (!BRepTools::Read(shape, inPath.c_str(), builder) || shape.IsNull()) {
+    std::cerr << "[occ-debug-mesh] failed to read BREP: " << inPath << "\n";
+    return 2;
+  }
+  BRepCheck_Analyzer an(shape);
+  std::cerr << "IsValid(whole) = " << (an.IsValid() ? "true" : "false") << "\n";
+  const struct { TopAbs_ShapeEnum t; const char* n; } types[] = {
+    {TopAbs_SOLID, "SOLID"}, {TopAbs_SHELL, "SHELL"}, {TopAbs_FACE, "FACE"},
+    {TopAbs_WIRE, "WIRE"}, {TopAbs_EDGE, "EDGE"}, {TopAbs_VERTEX, "VERTEX"}};
+  for (const auto& ty : types) {
+    TopTools_IndexedMapOfShape m;
+    TopExp::MapShapes(shape, ty.t, m);
+    for (Standard_Integer i = 1; i <= m.Extent(); ++i) {
+      const TopoDS_Shape& sub = m.FindKey(i);
+      std::cerr << ty.n << i << " valid=" << (an.IsValid(sub) ? "1" : "0");
+      const Handle(BRepCheck_Result)& res = an.Result(sub);
+      if (!res.IsNull()) {
+        for (BRepCheck_ListOfStatus::Iterator it(res->Status()); it.More(); it.Next()) {
+          std::cerr << " [" << statusName(it.Value()) << "]";
+        }
+        for (res->InitContextIterator(); res->MoreShapeInContext(); res->NextShapeInContext()) {
+          for (BRepCheck_ListOfStatus::Iterator it(res->StatusOnShape()); it.More(); it.Next()) {
+            std::cerr << " ctx[" << statusName(it.Value()) << "]";
+          }
+        }
+      }
+      std::cerr << "\n";
+    }
+  }
+  return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
   if (argc >= 3 && std::string(argv[1]) == "--make-test-box") {
     return makeTestBox(argv[2]);
   }
+  if (argc >= 3 && std::string(argv[1]) == "--make-test-bad") {
+    return makeTestBad(argv[2]);
+  }
+  if (argc >= 3 && std::string(argv[1]) == "--diagnose") {
+    return diagnose(argv[2]);
+  }
   if (argc < 2) {
     std::cerr << "usage: occ-debug-mesh <input.brep> [output.mesh.json]\n"
-              << "       occ-debug-mesh --make-test-box <out.brep>\n";
+              << "       occ-debug-mesh --make-test-box <out.brep>\n"
+              << "       occ-debug-mesh --make-test-bad <out.brep>\n";
     return 1;
   }
   const std::string inPath = argv[1];
