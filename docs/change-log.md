@@ -71,3 +71,4 @@
 | review 修复（去冗余 Perform、NaN/Inf 守卫、退化节点→failed_faces） | 健壮性；盒子 6 面法线实测外向（REVERSED 翻转正确） |
 | **缺陷遍历**（`BRepCheck_Analyzer` → `defect` sidecar） | 把工具从"查看器"变"诊断器"：检出哪类缺陷+ref。**关键**：缺陷常存"子形状在父语境下"的 context 状态里，不能只看 `Status()`、不能用 `IsValid(sub)` 门控 |
 | `defect.category` 加 `other`；`--diagnose`/`--make-test-bad` 工具 | BRepCheck ~50 状态码只映射常见的、其余落 other 不丢；开口盒子(NotClosed→open_boundary)离线验收 |
+| 复杂边界场景测试（`--make-test-located/selfx/edge`）+ 两处修复 | review 发现简单盒子没测到的假设：①**带 Location 的世界坐标**——旋转90°+平移后 bbox 精确吻合，M2-4 命脉验证通过；②`statusName` 改全枚举命名（未映射码不再塌成"Other"丢信息）；③wire 缺陷**用祖先查找挂到父面 face_id**（M2-5）。裸边优雅退化 |

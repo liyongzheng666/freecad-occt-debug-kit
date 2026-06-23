@@ -14,6 +14,9 @@
 // =====================================================================
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepBuilderAPI_MakeSolid.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepCheck_ListOfStatus.hxx>
@@ -25,8 +28,14 @@
 #include <BRepTools.hxx>
 #include <Standard_Failure.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopoDS_Edge.hxx>
 #include <TopoDS_Shell.hxx>
 #include <TopoDS_Solid.hxx>
+#include <TopoDS_Wire.hxx>
+#include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
+#include <TopTools_ListOfShape.hxx>
+#include <gp.hxx>
+#include <gp_Vec.hxx>
 #include <Poly_Triangle.hxx>
 #include <Poly_Triangulation.hxx>
 #include <TopAbs_Orientation.hxx>
@@ -146,37 +155,74 @@ struct Defect {
   std::string edgeId;
 };
 
-const char* statusName(BRepCheck_Status s) {
+// Full name for every BRepCheck_Status (no information loss on unmapped codes).
+std::string statusName(BRepCheck_Status s) {
+#define OCC_DM_CASE(x) case BRepCheck_##x: return #x;
   switch (s) {
-    case BRepCheck_NoError: return "NoError";
-    case BRepCheck_SelfIntersectingWire: return "SelfIntersectingWire";
-    case BRepCheck_IntersectingWires: return "IntersectingWires";
-    case BRepCheck_NotClosed: return "NotClosed";
-    case BRepCheck_InvalidCurveOnSurface: return "InvalidCurveOnSurface";
-    case BRepCheck_InvalidCurveOnClosedSurface: return "InvalidCurveOnClosedSurface";
-    case BRepCheck_NoCurveOnSurface: return "NoCurveOnSurface";
-    case BRepCheck_InvalidDegeneratedFlag: return "InvalidDegeneratedFlag";
-    case BRepCheck_NotConnected: return "NotConnected";
-    case BRepCheck_BadOrientation: return "BadOrientation";
-    case BRepCheck_BadOrientationOfSubshape: return "BadOrientationOfSubshape";
-    default: return "Other";
+    OCC_DM_CASE(NoError)
+    OCC_DM_CASE(InvalidPointOnCurve)
+    OCC_DM_CASE(InvalidPointOnCurveOnSurface)
+    OCC_DM_CASE(InvalidPointOnSurface)
+    OCC_DM_CASE(No3DCurve)
+    OCC_DM_CASE(Multiple3DCurve)
+    OCC_DM_CASE(Invalid3DCurve)
+    OCC_DM_CASE(NoCurveOnSurface)
+    OCC_DM_CASE(InvalidCurveOnSurface)
+    OCC_DM_CASE(InvalidCurveOnClosedSurface)
+    OCC_DM_CASE(InvalidSameRangeFlag)
+    OCC_DM_CASE(InvalidSameParameterFlag)
+    OCC_DM_CASE(InvalidDegeneratedFlag)
+    OCC_DM_CASE(FreeEdge)
+    OCC_DM_CASE(InvalidMultiConnexity)
+    OCC_DM_CASE(InvalidRange)
+    OCC_DM_CASE(EmptyWire)
+    OCC_DM_CASE(RedundantEdge)
+    OCC_DM_CASE(SelfIntersectingWire)
+    OCC_DM_CASE(NoSurface)
+    OCC_DM_CASE(InvalidWire)
+    OCC_DM_CASE(RedundantWire)
+    OCC_DM_CASE(IntersectingWires)
+    OCC_DM_CASE(InvalidImbricationOfWires)
+    OCC_DM_CASE(EmptyShell)
+    OCC_DM_CASE(RedundantFace)
+    OCC_DM_CASE(InvalidImbricationOfShells)
+    OCC_DM_CASE(UnorientableShape)
+    OCC_DM_CASE(NotClosed)
+    OCC_DM_CASE(NotConnected)
+    OCC_DM_CASE(SubshapeNotInShape)
+    OCC_DM_CASE(BadOrientation)
+    OCC_DM_CASE(BadOrientationOfSubshape)
+    OCC_DM_CASE(InvalidPolygonOnTriangulation)
+    OCC_DM_CASE(InvalidToleranceValue)
+    OCC_DM_CASE(EnclosedRegion)
+    OCC_DM_CASE(CheckFail)
   }
+#undef OCC_DM_CASE
+  return "Unknown";
 }
 
-// BRepCheck status -> our defect.category (docs/change-log.md §7; unmapped -> other).
+// BRepCheck status -> our defect.category (docs/change-log.md §7; unmapped -> other,
+// but the raw status name is always preserved).
 std::string statusCategory(BRepCheck_Status s) {
   switch (s) {
     case BRepCheck_SelfIntersectingWire:
     case BRepCheck_IntersectingWires:
+    case BRepCheck_InvalidImbricationOfWires:
       return "self_intersection";
     case BRepCheck_NotClosed:
+    case BRepCheck_FreeEdge:
       return "open_boundary";
+    case BRepCheck_NoCurveOnSurface:
     case BRepCheck_InvalidCurveOnSurface:
     case BRepCheck_InvalidCurveOnClosedSurface:
-    case BRepCheck_NoCurveOnSurface:
+    case BRepCheck_No3DCurve:
+    case BRepCheck_Invalid3DCurve:
       return "invalid_pcurve";
     case BRepCheck_InvalidDegeneratedFlag:
+    case BRepCheck_InvalidRange:
       return "degenerate";
+    case BRepCheck_InvalidMultiConnexity:
+      return "non_manifold";
     default:
       return "other";
   }
@@ -219,8 +265,22 @@ std::vector<Defect> collectDefects(const TopoDS_Shape& shape,
     for (Standard_Integer i = 1; i <= edgeMap.Extent(); ++i) {
       collectInto(an, edgeMap.FindKey(i), "", "E" + std::to_string(i), seen, out);
     }
-    // Shell/solid/wire-level defects (e.g. NotClosed) have no face/edge id.
-    for (TopAbs_ShapeEnum type : {TopAbs_SOLID, TopAbs_SHELL, TopAbs_WIRE}) {
+    // Wire-level defects (e.g. SelfIntersectingWire) carry no id of their own;
+    // attach them to their parent face so the viewer can highlight it (M2-5).
+    TopTools_IndexedDataMapOfShapeListOfShape wireFaces;
+    TopExp::MapShapesAndAncestors(shape, TopAbs_WIRE, TopAbs_FACE, wireFaces);
+    TopTools_IndexedMapOfShape wires;
+    TopExp::MapShapes(shape, TopAbs_WIRE, wires);
+    for (Standard_Integer i = 1; i <= wires.Extent(); ++i) {
+      const TopoDS_Shape& wire = wires.FindKey(i);
+      std::string faceId;
+      if (wireFaces.Contains(wire) && !wireFaces.FindFromKey(wire).IsEmpty()) {
+        faceId = "F" + std::to_string(faceMap.FindIndex(wireFaces.FindFromKey(wire).First()));
+      }
+      collectInto(an, wire, faceId, "", seen, out);
+    }
+    // Shell/solid-level defects (e.g. NotClosed) are scene-level, no face/edge id.
+    for (TopAbs_ShapeEnum type : {TopAbs_SOLID, TopAbs_SHELL}) {
       TopTools_IndexedMapOfShape m;
       TopExp::MapShapes(shape, type, m);
       for (Standard_Integer i = 1; i <= m.Extent(); ++i) {
@@ -363,6 +423,49 @@ int makeTestBad(const std::string& outPath) {
   return 0;
 }
 
+// A box carrying a non-identity LOCATION (rotate 90 deg about Z, then translate
+// by (100,200,300)) WITHOUT baking it into geometry -> exercises the world-
+// coordinate path (M2-4): meshFace must apply the accumulated location.
+int makeTestLocated(const std::string& outPath) {
+  TopoDS_Shape box = BRepPrimAPI_MakeBox(10.0, 20.0, 30.0).Shape();
+  gp_Trsf rot;
+  rot.SetRotation(gp::OZ(), M_PI / 2.0);
+  gp_Trsf tr;
+  tr.SetTranslation(gp_Vec(100.0, 200.0, 300.0));
+  const gp_Trsf trsf = tr.Multiplied(rot);  // apply rotation first, then translation
+  TopoDS_Shape located = box.Moved(TopLoc_Location(trsf));
+  if (!BRepTools::Write(located, outPath.c_str())) {
+    std::cerr << "[occ-debug-mesh] failed to write located box: " << outPath << "\n";
+    return 2;
+  }
+  std::cerr << "[occ-debug-mesh] wrote located box -> " << outPath << "\n";
+  return 0;
+}
+
+// A self-intersecting (bowtie) planar face -> BRepCheck SelfIntersectingWire.
+int makeTestSelfx(const std::string& outPath) {
+  BRepBuilderAPI_MakePolygon poly(gp_Pnt(0, 0, 0), gp_Pnt(10, 10, 0),
+                                  gp_Pnt(10, 0, 0), gp_Pnt(0, 10, 0), Standard_True);
+  TopoDS_Face face = BRepBuilderAPI_MakeFace(poly.Wire(), Standard_True).Face();
+  if (face.IsNull() || !BRepTools::Write(face, outPath.c_str())) {
+    std::cerr << "[occ-debug-mesh] failed to write self-intersecting face: " << outPath << "\n";
+    return 2;
+  }
+  std::cerr << "[occ-debug-mesh] wrote self-intersecting face -> " << outPath << "\n";
+  return 0;
+}
+
+// A bare edge (no faces) -> exercises the V4 path (currently 0 faces).
+int makeTestEdge(const std::string& outPath) {
+  TopoDS_Edge edge = BRepBuilderAPI_MakeEdge(gp_Pnt(0, 0, 0), gp_Pnt(10, 5, 2)).Edge();
+  if (edge.IsNull() || !BRepTools::Write(edge, outPath.c_str())) {
+    std::cerr << "[occ-debug-mesh] failed to write edge: " << outPath << "\n";
+    return 2;
+  }
+  std::cerr << "[occ-debug-mesh] wrote bare edge -> " << outPath << "\n";
+  return 0;
+}
+
 // Dump what BRepCheck_Analyzer reports for every subshape — debugging aid.
 int diagnose(const std::string& inPath) {
   TopoDS_Shape shape;
@@ -407,6 +510,15 @@ int main(int argc, char** argv) {
   }
   if (argc >= 3 && std::string(argv[1]) == "--make-test-bad") {
     return makeTestBad(argv[2]);
+  }
+  if (argc >= 3 && std::string(argv[1]) == "--make-test-located") {
+    return makeTestLocated(argv[2]);
+  }
+  if (argc >= 3 && std::string(argv[1]) == "--make-test-selfx") {
+    return makeTestSelfx(argv[2]);
+  }
+  if (argc >= 3 && std::string(argv[1]) == "--make-test-edge") {
+    return makeTestEdge(argv[2]);
   }
   if (argc >= 3 && std::string(argv[1]) == "--diagnose") {
     return diagnose(argv[2]);
