@@ -38,12 +38,11 @@ scripts/bootstrap.sh            # 克隆钉死的源码、打补丁、构建 OCC
 ### 脚本等价的手工步骤
 
 ```bash
-# 1. 取 OCCT 7.8.1 源码，然后重新应用本地的 debug/build 改动。
-git clone --depth 1 --branch V7_8_1 https://github.com/Open-Cascade-SAS/OCCT.git occt
-git -C occt apply ../patches/occt-debug-build.patch
+# 1. 从 liyongzheng666/OCCT fork 取源码：v7_8_1-fillet-debug 分支已含 debug/build 改动（无需打补丁）。
+git clone --depth 1 --branch v7_8_1-fillet-debug https://github.com/liyongzheng666/OCCT.git occt
 
-# 2. 取 FreeCAD 源码，钉死到本 kit 捕获时的确切 commit。
-git clone --filter=blob:none https://github.com/FreeCAD/FreeCAD.git FreeCAD
+# 2. 从 liyongzheng666/FreeCAD fork 取源码，钉死到本 kit 捕获时的确切 commit。
+git clone --filter=blob:none https://github.com/liyongzheng666/FreeCAD.git FreeCAD
 git -C FreeCAD checkout 2b7e9a6896bc9b5dc4555c2f6faa9adc0a7caf47
 
 # 3. 还原那些本属于 FreeCAD/ 内、但不在 FreeCAD git 里的文件：
@@ -67,8 +66,8 @@ scripts/workspace-doctor.sh --runtime
 
 注意：
 
-- `patches/occt-debug-build.patch` 对 `V7_8_1` 带两处改动：在 Debug 构建中保留 debug map，使 LLDB 能绑定断点（否则 `-Wl,-s` 会将其 strip 掉）；以及一处 Clang 18 要求的 FreeType `tags` 强制转换。对 `occt/` 执行 `reset`/`checkout`/`pull` 会回退第一处改动——断点失灵时重新 apply 即可。排查表见 [docs/occt-debugging.md](docs/occt-debugging.md)。
-- FreeCAD 钉在 commit `2b7e9a6896b`（`FreeCAD/main` 的祖先），源码精确可复现。本 kit 不携带任何 FreeCAD 源码改动——该 commit 是纯上游；唯一还原的文件是 `TOPONAMING.md` 参考说明。
+- OCCT 的两处本地改动现维护在 fork `liyongzheng666/OCCT` 的 `v7_8_1-fillet-debug` 分支上（已 commit，不再是工作树补丁）：在 Debug 构建中保留 debug map，使 LLDB 能绑定断点（否则 `-Wl,-s` 会将其 strip 掉）；以及一处 Clang 18 要求的 FreeType `tags` 强制转换。`patches/occt-debug-build.patch` 仅作为该 delta 的可读参考保留。排查表见 [docs/occt-debugging.md](docs/occt-debugging.md)。
+- FreeCAD 从 fork `liyongzheng666/FreeCAD` 的 `local-occt-integration` 分支钉死在 commit `2b7e9a6896b`（`FreeCAD/main` 的祖先），当前与上游零 diff、精确可复现；本 kit 仍把仅本地的 CMake preset 与 `TOPONAMING.md` 参考说明从 `templates/` 还原进去（见上一步第 3 步）。
 - 构建完成后，用 `code .` 打开工作区，并从[从这里开始](#从这里开始)继续。
 
 ## 从这里开始
