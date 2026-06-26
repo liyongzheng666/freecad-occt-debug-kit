@@ -1,10 +1,15 @@
 # Independent source repositories managed by their own Git histories.
+# Pinned and cloned by scripts/bootstrap.sh (see PRINT_SHA there).
 /FreeCAD/
 /occt/
+/tools/Print/
 
 # Local agent/runtime state and user artifacts.
 /.omx/
 /myFold/
+# Debug session output (events.ndjson + BREP/mesh assets) — generated data,
+# never committed (linkage doc §3.1; arch §10).
+/.occ-debug/
 
 # Generated caches.
 **/__pycache__/
