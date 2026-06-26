@@ -97,6 +97,11 @@ step "Configure + build OCCT (debug) and install to occt/install/debug"
 "$SCRIPT_DIR/configure-occt.sh"
 "$SCRIPT_DIR/rebuild-occ.sh" "$JOBS"
 
+# ---- 5b. Build the occ-debug-mesh CLI against the just-built debug OCCT ----
+# Links the same install-tree OCCT (occt/install/debug); must run after step 5.
+step "Build occ-debug-mesh (BREP -> print-mesh CLI)"
+"$SCRIPT_DIR/build-occ-debug-mesh.sh" "$JOBS"
+
 # ---- 6. Build FreeCAD against the local OCCT ------------------------------
 step "Configure + build FreeCAD against local OCCT (-j$JOBS)"
 ( cd FreeCAD
@@ -106,6 +111,9 @@ step "Configure + build FreeCAD against local OCCT (-j$JOBS)"
 # ---- 7. Verify ------------------------------------------------------------
 step "Verify toolchain, indexing, and runtime library resolution"
 "$SCRIPT_DIR/workspace-doctor.sh" --runtime
+
+step "Verify occ-debug-mesh (offline fixture regression)"
+"$SCRIPT_DIR/verify-occ-debug-mesh.sh"
 
 step "Bootstrap complete."
 note "Open the workspace with:  code ."
