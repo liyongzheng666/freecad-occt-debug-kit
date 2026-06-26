@@ -21,7 +21,7 @@ OCCT_REF="V7_8_1"
 FREECAD_URL="https://github.com/FreeCAD/FreeCAD.git"
 FREECAD_SHA="2b7e9a6896bc9b5dc4555c2f6faa9adc0a7caf47"   # ancestor of FreeCAD/main
 PRINT_URL="https://github.com/liyongzheng666/Print.git"
-PRINT_SHA="b69d0d19f9c756f756cf7805795b7f3c8c5e7180"     # pinned Print viewer/bridge revision
+PRINT_SHA="98657e48aff2b0410a45f85540ee40e77dcc5ca4"     # pinned Print revision (main; geom.schema + topology source + P0b UV viewer)
 
 JOBS="${1:-8}"
 
