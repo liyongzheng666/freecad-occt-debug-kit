@@ -16,10 +16,13 @@
 set -euo pipefail
 
 # ---- Pinned sources (the exact revisions this kit was captured against) ----
-OCCT_URL="https://github.com/Open-Cascade-SAS/OCCT.git"
-OCCT_REF="V7_8_1"
-FREECAD_URL="https://github.com/FreeCAD/FreeCAD.git"
-FREECAD_SHA="2b7e9a6896bc9b5dc4555c2f6faa9adc0a7caf47"   # ancestor of FreeCAD/main
+# OCCT and FreeCAD are maintained as forks under liyongzheng666, so the local
+# edits live in git history rather than as a working-tree patch. See the README
+# "架构与 Print 依赖" section.
+OCCT_URL="https://github.com/liyongzheng666/OCCT.git"
+OCCT_REF="v7_8_1-fillet-debug"                           # V7_8_1 + debug-map/Clang18 commit (was patches/occt-debug-build.patch)
+FREECAD_URL="https://github.com/liyongzheng666/FreeCAD.git"
+FREECAD_SHA="2b7e9a6896bc9b5dc4555c2f6faa9adc0a7caf47"   # ancestor of FreeCAD/main; pinned on the fork's local-occt-integration branch
 PRINT_URL="https://github.com/liyongzheng666/Print.git"
 PRINT_SHA="98657e48aff2b0410a45f85540ee40e77dcc5ca4"     # pinned Print revision (main; geom.schema + topology source + P0b UV viewer)
 
@@ -45,24 +48,20 @@ for tool in git pixi; do
 done
 [ "$missing" -eq 0 ] || { echo "[!] install the missing tools and re-run." >&2; exit 1; }
 
-# ---- 1. OCCT source @ V7_8_1 + local debug/build patch --------------------
+# ---- 1. OCCT source from the liyongzheng666/OCCT fork ---------------------
+# The fork's v7_8_1-fillet-debug branch is V7_8_1 with the debug-map + Clang 18
+# edits committed (no working-tree patch). patches/occt-debug-build.patch is kept
+# only as a human-readable reference of that delta.
 if [ ! -d occt/.git ]; then
-  step "Clone OCCT $OCCT_REF"
+  step "Clone OCCT fork @ $OCCT_REF"
   git clone --depth 1 --branch "$OCCT_REF" "$OCCT_URL" occt
 else
   step "OCCT already present — skip clone ($(git -C occt describe --tags --always))"
 fi
 
-if git -C occt apply --reverse --check "$WS/patches/occt-debug-build.patch" >/dev/null 2>&1; then
-  note "OCCT debug/build patch already applied — skip"
-else
-  step "Apply OCCT debug/build patch (keep debug map for LLDB + Clang 18 cast fix)"
-  git -C occt apply "$WS/patches/occt-debug-build.patch"
-fi
-
-# ---- 2. FreeCAD source pinned to the exact captured commit ----------------
+# ---- 2. FreeCAD source from the liyongzheng666/FreeCAD fork (pinned SHA) ---
 if [ ! -d FreeCAD/.git ]; then
-  step "Clone FreeCAD (partial) and pin to $FREECAD_SHA"
+  step "Clone FreeCAD fork (partial) and pin to $FREECAD_SHA"
   git clone --filter=blob:none "$FREECAD_URL" FreeCAD
   git -C FreeCAD checkout "$FREECAD_SHA"
 else
