@@ -66,7 +66,7 @@
 | G11 | **成本度量**（tool-call 数 / wall-clock / 重跑成本） | 无 | 🟠 | A4 |
 | G23 | **SSI 靶向探针（S3）**：capture 两面 + 跑独立 `IntTools` 复现 | 🟡 探针**已实做**（`ssi_probe` 真跑面面求交→S3 签名，4 夹具判别自测）；capture 两面（occdbg/LLDB）仍欠 | 🟡 | A7 |
 | G12 | **置信度 / 主动弃权 + abstention precision** | 设计有（"人工兜底"），机制无 | 🟡 | A8 |
-| G13 | **真实 capture 前半管线**（occdbg / LLDB 动态命令 / FCStd baseline / instrumentation patch） | 设计有（架构 M2/M3），未实现 | 🟡 | A7/A8 |
+| G13 | **真实 capture 前半管线**（occdbg / LLDB 动态命令 / FCStd baseline / instrumentation patch） | 🟡 LLDB capture 链路已通（断点绑定 + occ_emit_shape→BREP，`capture.py` 桥真跑验证）；FCStd baseline / instrumentation patch 待 | 🟡 | A7/A8 |
 | G14 | **SurfData/corner 深探针（S2/S4）** | 依赖 G13 | 🟡 | A8 |
 | G15 | **沙箱 / 资源上限 / per-case 隔离 / 并发** | daemon 有单点 timeout，未泛化 | 🟡 | A8 |
 | G16 | **泛化 adapter**（chamfer / boolean / offset；本体已内核无关） | 仅 fillet | 🟡 | A8 |
@@ -100,6 +100,7 @@ agent/
 │   ├── triage_input.py             # S0 输入预检（二面角/短边/sliver/容差）
 │   ├── ssi_probe.py                # S3 靶向子复现（面面求交+近切角→S3签名）（A7）
 │   ├── _ssi_harness.py             # FreeCAD 进程内 SSI harness（env 驱动，非 agent 包）
+│   ├── capture.py                  # LLDB 活几何 capture 桥（occ_capture→BREP→ssi_probe）（A7）
 │   └── playbook.py                 # query_playbook 检索
 ├── loop/                           # agent 决策回路（G1/G20）
 │   ├── decide_rule.py              # 规则版 policy（eval 下限基线）
@@ -212,7 +213,7 @@ agent/
 
 补齐：G23、G13（一部分）。
 
-- [ ] capture 失败现场相撞的两张面（轻量埋点 / occdbg / LLDB）——**仍欠**（深埋点，A7 的 capture 接缝；本分支 `occ-capture-lldb` 有 LLDB capture 底座可接）。
+- [~] capture 失败现场相撞的两张面（occdbg / LLDB）——✅ **capture 桥已建并真跑验证**：`tools/capture.py` 驱动 `lldb -b` + `scripts/occ_capture.py`，断点处 `BRepTools::Write` 真写出活几何 BREP（断点绑定 OK，OSO 调试映射在）；顺带**修了 occ_capture 的 OCCT 7.8 `BRepTools::Write` 三参签名 bug**。⏳ 待 pin：失败现场 ChFi3d 断点 + 两面表达式（如 `S1.Face()`/`S2.Face()`），即可 `capture_ssi` → 真案子上的 S3 判别。
 - [x] `tools/ssi_probe.py`：**靶向子复现**——脱离 ChFi3d 单独跑面面求交（`intersectSS` + `section` + 近切角），**S3 机制证据落地**：近切 + 期望接触却 0 → S3 签名。✅ 4 夹具判别自测（横切/割→否、切→否、近切离开→是），`test_ssi_probe.py`。
 - [ ] playbook 补 S3 节点的 `localize`/`mechanism`/`counterfactual`（容差扰动 vs 降半径互斥判别 S3/S2）。
 - [ ] eval 加 SSI 分层 case。
