@@ -1,0 +1,145 @@
+"""跨层 typed 数据契约（G2：agent-native typed I/O）。
+
+这些 dataclass 钉死工具 / 回路 / eval 的接口。字段直接来自设计文档，不是新决策：
+  - RunEnd            -> ../docs/occ-fillet-debug-agent-architecture.md §24
+  - GroundTruth       -> docs/root-cause-verification.md §6（四元组）
+  - CausalHypothesis  -> docs/root-cause-verification.md §5（分级因果假设）
+  - Stage             -> playbook/blend-failure-ontology.md §2
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Optional
+
+
+class Stage(str, Enum):
+    """blend 失效本体阶段 S0–S6（playbook/blend-failure-ontology.md §2）。"""
+    S0_INPUT = "S0"      # 输入质量
+    S1_SPINE = "S1"      # spine / 链抽取
+    S2_SURFACE = "S2"    # blend 面构造（滚球容纳）
+    S3_SSI = "S3"        # 面面求交
+    S4_CORNER = "S4"     # 顶点收敛
+    S5_SEW = "S5"        # 拓扑缝合
+    S6_VALID = "S6"      # 输出有效性
+
+
+@dataclass
+class RunEnd:
+    """reproduce() 的结构化结果（架构 §24）。
+
+    注意：status 由几何有效性决定，不是裸 IsDone()。is_done 仅作诊断信号，
+    禁止当成功判据（见 docs/root-cause-verification.md §2 代理奖励陷阱）。
+    """
+    status: str                                       # "ok" | "failed"
+    exception: Optional[str] = None
+    phase: Optional[str] = None
+    faulty_contours: list[int] = field(default_factory=list)
+    faulty_vertices: list[str] = field(default_factory=list)
+    bad_shape: Optional[str] = None                   # asset 相对路径
+    is_done: Optional[bool] = None                    # 仅诊断，勿当判据
+
+
+@dataclass
+class ValidityReport:
+    """check_valid() 结果：几何有效性判据，替代 IsDone()（G17）。"""
+    valid: bool
+    self_intersections: list = field(default_factory=list)
+    invalid_subshapes: list = field(default_factory=list)
+    g1_violations: list = field(default_factory=list)
+    notes: str = ""
+
+
+@dataclass
+class TriageReport:
+    """triage_input() 结果：S0 输入预检（G18）。"""
+    sliver_faces: list = field(default_factory=list)
+    short_edges: list = field(default_factory=list)
+    near_tangent_pairs: list = field(default_factory=list)   # (faceA, faceB, dihedral)
+    tolerance_outliers: list = field(default_factory=list)
+    convexity: dict = field(default_factory=dict)            # edge_id -> "convex" | "concave"
+
+
+@dataclass
+class ToolResult:
+    """一次 agent 工具调用的 typed 信封（G2）。
+
+    工具特定的结构化结果（RunEnd / ValidityReport / TriageReport …）放进 payload；
+    这层信封统一承载"调用是否成功、产物引用、源码锚点"，由 SessionWriter 落进
+    events.ndjson（进 Print viewer 供 review + 进轨迹供离线评分）。
+
+    注意：ok 指【调用本身】成功（工具没崩），**不是几何成功**——几何成功判据是
+    check_valid（G17）。reproduce 返回 status="failed" 时 ok 仍为 True（调用成功，
+    几何失败的语义在 payload 里）。
+    """
+    tool: str                                         # 工具名，如 "reproduce" / "check_valid"
+    ok: bool                                          # 调用成功（≠ 几何有效）
+    summary: str = ""                                 # 一句话人读摘要
+    payload: dict = field(default_factory=dict)       # 工具特定结构化结果
+    artifact_id: Optional[str] = None                 # 产物引用（brep/mesh 资产路径或 id）
+    source: Optional[str] = None                      # "file:line" 源码锚点
+    error: Optional[str] = None                       # 结构化错误（ok=False 时填）
+
+
+@dataclass
+class Evidence:
+    """一条可被 review 的证据，锚到 artifact + source:line（架构 R6）。"""
+    summary: str
+    artifact_id: Optional[str] = None
+    source: Optional[str] = None                      # "file:line"
+
+
+@dataclass
+class CausalHypothesis:
+    """分级因果假设（docs/root-cause-verification.md §5）。
+
+    agent 输出一条按证据强度排序的链；localization_depth 表示这条假设站到多深。
+    根因常是因果链（症状≠根因，如 S0 近切 → 诱发 S3）：stage 是归咎的【根】(distal)，
+    chain 是 distal→proximate 的传播路径（默认 [stage]，即单阶段）。
+    """
+    stage: Stage                                             # 归咎的根（distal）阶段
+    cause: str
+    chain: list[Stage] = field(default_factory=list)         # 传播链 distal→proximate；空=单阶段
+    entities: list[str] = field(default_factory=list)        # 涉及的面/边/顶点
+    localization_depth: str = "stage"                        # "stage" | "entity" | "mechanism"
+    evidence: list[Evidence] = field(default_factory=list)
+    counterfactual: Optional[str] = None                     # 靶向修法及其结果
+    confidence: float = 0.0
+
+    def __post_init__(self):
+        if not self.chain:
+            self.chain = [self.stage]
+
+
+@dataclass
+class Conclusion:
+    """investigate() 的最终产物。证据不足时 abstained=True，交人兜底。"""
+    hypotheses: list[CausalHypothesis] = field(default_factory=list)   # 排序后的因果链
+    abstained: bool = False
+    abstain_reason: str = ""
+
+
+@dataclass
+class GroundTruth:
+    """case 的四元组 GT（docs/root-cause-verification.md §6）。
+
+    多由 instrumented truth run 产出；早期可用"构造已知根因的合成 case"手工标
+    （见 README『已知边界』B1：早期 eval 跑在合成分布上）。
+
+    true_chain 是因果链 distal→proximate（如 [S0, S3]：S0 近切诱发 S3 求交失败）；
+    单阶段则单元素 [S3]。scorer 对链做部分得分：命中根=满分，只命中症状=部分分。
+    """
+    true_chain: list[Stage]                           # 因果链 distal→proximate；单阶段 [S3]
+    entities: list[str]
+    expected_evidence: str
+    aligned_fix: str                                  # 与该因（根）对齐的靶向修法（可执行）
+
+    @property
+    def root_stage(self) -> Stage:
+        """最远端（根）阶段——真正先崩的那一层。"""
+        return self.true_chain[0]
+
+    @property
+    def symptom_stage(self) -> Stage:
+        """最近端（症状）阶段——异常被抛出的那一层。"""
+        return self.true_chain[-1]
