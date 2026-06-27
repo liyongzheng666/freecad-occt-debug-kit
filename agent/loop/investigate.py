@@ -1,11 +1,12 @@
 """investigate(case) — 编排 observe→定位→反事实→结论（A3 / G1 / G20，规则版 v0）。
 
-三腿验证见 docs/root-cause-verification.md §3。本 v0 只用**已落地的真工具**：
+三腿验证见 docs/root-cause-verification.md §3。本 v0 用**已落地的真工具**：
   observe   = reproduce（FreeCADCmd 真跑 recompute）
   定位/有效 = check_valid（occ-debug-mesh BRepCheck）
   反事实    = 靶向半径探测（降半径能否恢复成有效实体；判据是 S6 几何有效，**非 IsDone**）
-还没接的（playbook 决策表 / SSI surfdata 深探针）留作 A7/A8——本 v0 **诚实定位到能站住
-的那一层并标出未解的更深机制**，不硬猜（root-cause §5『弃权 / 分级定位』）。
+  决策      = query_playbook（fillet-failures.json：症状→候选→判别器，取最 distal 命中者为根）
+判别器里 ssi_probe 一腿需 capture 失败现场两面（A7 capture 接缝未接）→ 标 untestable，
+不硬猜（root-cause §5『弃权 / 分级定位』）。
 
 铁律落在代码里：reproduce 的 status="ok" 只表"跑完产形状"，是否成功一律由 check_valid 复判。
 """
@@ -18,6 +19,7 @@ from agent.contracts import (
     CausalHypothesis, Conclusion, Evidence, Stage, ToolResult,
 )
 from agent.tools.check_valid import check_valid
+from agent.tools.playbook import query_playbook
 from agent.tools.reproduce import reproduce
 
 # 反事实半径阶梯（requested 的降序倍数）；停在首个"可行"半径即得可行上界
@@ -77,6 +79,80 @@ def _probe_feasible_bound(case, requested, out_dir, sink, verbose):
     return None, prev_infeasible
 
 
+# ---- 决策表驱动定位（playbook：症状 → 候选 → 判别器）--------------------------
+
+def _run_discriminator(case, radius, cand, out, sink, verbose):
+    """跑一个候选的 localize 判别器，返回 (status, evidence_str)。
+
+    status ∈ {"fired"(命中该阶段) | "ruled_out"(排除) | "untestable"(此处无法运行)}。
+    """
+    tool = cand.get("localize", {}).get("tool")
+    if tool == "check_valid_input":                        # S0：输入几何是否本就无效
+        base = reproduce(case, radius=0.0, out_dir=out)
+        if not base.bad_shape:
+            return "untestable", "无法导出输入几何"
+        valid = _validate(base.bad_shape, sink, verbose).valid
+        return ("ruled_out", "输入 check_valid 通过") if valid else ("fired", "输入 check_valid 不通过")
+    if tool == "radius_probe":                             # S2：降半径能否恢复有效实体
+        feas_r, infeas_floor = _probe_feasible_bound(case, radius, out, sink, verbose)
+        if feas_r is not None:
+            return "fired", f"降半径恢复有效实体，可行上界 ∈ [{feas_r}, {infeas_floor})"
+        return "ruled_out", "降半径阶梯内无可行半径"
+    if tool == "ssi_probe":                                # S3：需失败现场两面（capture 未接）
+        return "untestable", "需 capture 失败现场两面（occdbg/LLDB，A7 capture 接缝未接）"
+    return "untestable", f"未知判别工具 {tool}"
+
+
+def _verdicts_to_evidence(node, run, radius, verdicts):
+    mark = {"fired": "✓命中", "ruled_out": "✗排除", "untestable": "…未测"}
+    evs = [
+        Evidence(f"playbook 命中 {node['id']}：近端阶段 {node['proximate_stage']}",
+                 source="agent/playbook/fillet-failures.json"),
+        Evidence(f"reproduce: {run.exception} @ r={radius}", source="agent/tools/reproduce.py"),
+    ]
+    for cand, status, ev in verdicts:
+        evs.append(Evidence(
+            f"候选 {cand['stage']}（{cand.get('localize', {}).get('tool')}）{mark[status]}：{ev}",
+            source="agent/loop/investigate.py"))
+    return evs
+
+
+def _diagnose_via_playbook(case, radius, run, out, sink, verbose) -> Conclusion:
+    """按 symptom 命中 playbook 节点，逐候选跑判别器，取最 distal 命中者为根。"""
+    sig = {"exception": run.exception or "", "phase": run.phase, "is_done": run.is_done}
+    node = query_playbook(sig)
+    if node is None:
+        return Conclusion(abstained=True,
+                          abstain_reason=f"无 playbook 节点匹配 symptom（exc={run.exception}, phase={run.phase}）")
+    _log(verbose, f"playbook 命中 {node['id']}（近端 {node['proximate_stage']}），逐候选判别")
+
+    verdicts = []                                          # [(cand, status, ev)]
+    for cand in node["root_cause_candidates"]:
+        status, ev = _run_discriminator(case, radius, cand, out, sink, verbose)
+        verdicts.append((cand, status, ev))
+        _log(verbose, f"  候选 {cand['stage']} [{cand.get('localize', {}).get('tool')}] → {status}: {ev}")
+
+    fired = [(c, ev) for (c, st, ev) in verdicts if st == "fired"]
+    if not fired:
+        summ = "；".join(f"{c['stage']}={st}" for c, st, _ in verdicts)
+        return Conclusion(abstained=True,
+                          abstain_reason=f"playbook {node['id']} 候选判别均未命中（{summ}），证据不足，交人兜底。")
+
+    cand, ev = fired[0]                                    # 候选按 distal→proximate 排，取最 distal 命中者为根
+    root = Stage(cand["stage"])
+    prox = Stage(node["proximate_stage"])
+    chain = [root] if root == prox else [root, prox]
+    cf = cand.get("counterfactual", {})
+    cf_tail = (f"；互斥于 {cf['discriminates_from']}" if cf.get("discriminates_from")
+               else (f"；保持 {cf['must_not_change']} 不变" if cf.get("must_not_change") else ""))
+    return Conclusion(hypotheses=[CausalHypothesis(
+        stage=root, chain=chain, cause=cand["cause"],
+        localization_depth="stage", confidence=0.6,
+        counterfactual=f"{cf.get('fix', '?')}（{ev}）{cf_tail}",
+        evidence=_verdicts_to_evidence(node, run, radius, verdicts),
+    )])
+
+
 def investigate(
     case_id: str,
     *,
@@ -109,56 +185,9 @@ def _rule_investigate(case, radius, out, sink, verbose) -> Conclusion:
     _log(verbose, f"observe: reproduce {case} @ r={radius}")
     run = _observe(case, radius, out, sink, verbose)
 
-    # —— 分支 A：算法没跑完（典型 StdFail_NotDone）——
+    # —— 分支 A：算法没跑完（典型 StdFail_NotDone）→ 决策表驱动逐候选判别 ——
     if run.status != "ok" and run.phase == "fillet_notdone":
-        _log(verbose, "定位: 排除 S0（查输入几何有效性）")
-        base = reproduce(case, radius=0.0, out_dir=out)             # 导出基础几何
-        input_valid = bool(base.bad_shape) and _validate(base.bad_shape, sink, verbose).valid
-
-        _log(verbose, "反事实: 降半径探可行上界")
-        feas_r, infeas_floor = _probe_feasible_bound(case, radius, out, sink, verbose)
-
-        if feas_r is not None and input_valid:
-            hyp = CausalHypothesis(
-                stage=Stage.S2_SURFACE,
-                chain=[Stage.S2_SURFACE],
-                cause=(f"圆角半径 {radius} 相对几何过大：ChFi3d 无法完成（StdFail_NotDone）。"
-                       f"可行半径上界 ∈ [{feas_r}, {infeas_floor})——半径 ≤ ~{feas_r} 能生成"
-                       f"有效实体，≥ ~{infeas_floor} 即失败。输入几何本身有效，S0 已排除。"),
-                entities=[],
-                localization_depth="stage",
-                evidence=[
-                    Evidence(f"reproduce: StdFail_NotDone @ r={radius}（{run.phase}）",
-                             artifact_id=None, source="agent/tools/reproduce.py"),
-                    Evidence("输入几何 check_valid 通过 → S0 输入质量排除",
-                             source="agent/tools/check_valid.py"),
-                    Evidence(f"反事实半径探测：可行上界 ∈ [{feas_r}, {infeas_floor})",
-                             source="agent/loop/investigate.py"),
-                    Evidence("⚠ 最深子阶段未细分：r≫可行上界，最可能 S2 滚球容纳不下；"
-                             "若仅临界 overflow，失败可能后移到 S3 面面求交 / S5 缝合"
-                             "（『半径过大→无法缝合』是此候选）。区分需 surfdata/SSI 探针（A7/A8）。"),
-                ],
-                counterfactual=(f"互斥判别：降半径(→{feas_r}) 重跑→有效实体 ✅；输入未改仍失败 → "
-                                f"因落在【半径 × 几何容纳】，非输入质量(S0)。"),
-                confidence=0.6,
-            )
-            return Conclusion(hypotheses=[hyp])
-
-        if not input_valid:
-            hyp = CausalHypothesis(
-                stage=Stage.S0_INPUT, chain=[Stage.S0_INPUT],
-                cause="输入几何 check_valid 即判无效 → 失败根在 S0 输入质量，先 heal 输入。",
-                localization_depth="stage", confidence=0.55,
-                evidence=[Evidence("base shape check_valid 不通过", source="agent/tools/check_valid.py")],
-            )
-            return Conclusion(hypotheses=[hyp])
-
-        # 输入有效但任何更小半径也复现不出可行 → 站不住，弃权交人
-        return Conclusion(
-            abstained=True,
-            abstain_reason=f"r={radius} 失败但降半径阶梯内未找到可行半径，仅靠 reproduce+check_valid "
-                           f"无法定位（需 SSI/surfdata 深探针）。",
-        )
+        return _diagnose_via_playbook(case, radius, run, out, sink, verbose)
 
     # —— 分支 B：跑完产出形状 → 复判有效性 ——
     if run.status == "ok" and run.bad_shape:

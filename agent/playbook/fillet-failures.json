@@ -1,0 +1,32 @@
+{
+  "_schema": "blend-failure-ontology.md §5；本文件是 query_playbook 实读的可执行决策表（环境无 PyYAML，故用 JSON；fillet-failures.yaml 为人读 schema 参考）。",
+  "_rules": "symptom = 触发条件(适配层，非结论)；root_cause_candidates 按 distal→proximate 排序，各带一个 localize.tool 判别器；investigate 跑判别器，取最 distal 的命中者为根。counterfactual 的 discriminates_from / must_not_change 编码互斥靶向修法。",
+  "signatures": [
+    {
+      "id": "fillet-notdone-overflow",
+      "symptom": { "exception_contains": "StdFail_NotDone", "phase": "fillet_notdone" },
+      "proximate_stage": "S2",
+      "root_cause_candidates": [
+        {
+          "stage": "S0",
+          "cause": "输入支撑面近切 / sliver / 容差不一致：病根在输入质量",
+          "localize": { "tool": "check_valid_input", "check": "input_valid" },
+          "counterfactual": { "fix": "heal_input", "must_not_change": "radius" }
+        },
+        {
+          "stage": "S2",
+          "cause": "圆角半径相对几何过大：滚球容纳不下，blend 面建不出",
+          "localize": { "tool": "radius_probe", "check": "feasible_upper_bound" },
+          "counterfactual": { "fix": "lower_radius", "discriminates_from": "S3" }
+        },
+        {
+          "stage": "S3",
+          "cause": "面面求交退化 / 近切不稳：blend 面与邻面无干净 contact 曲线",
+          "localize": { "tool": "ssi_probe", "check": "s3_signature" },
+          "mechanism": { "evidence": "期望 1 条 contact 曲线，实得 0；两面近切" },
+          "counterfactual": { "fix": "perturb_tolerance", "must_not_change": "radius" }
+        }
+      ]
+    }
+  ]
+}

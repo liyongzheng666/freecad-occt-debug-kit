@@ -1,6 +1,6 @@
 # 圆角失效决策表（playbook）—— 每个节点挂在 blend-failure-ontology.md 的某阶段上。
 # 节点 schema 见 blend-failure-ontology.md §5。
-# 占位：A2 取消下方注释并补全 3 条签名。query_playbook 现在读到空列表。
+# 注意：query_playbook 实读的是 fillet-failures.json（环境无 PyYAML）。本文件 = 人读 schema 参考。
 #
 # - id: stripe-too-big-radius
 #   symptom:                       # 适配层：触发条件（不是结论）
@@ -22,4 +22,4 @@
 #       mechanism: { evidence: "期望 1 条 contact 曲线，实得 0" }
 #       counterfactual: { fix: perturb_tolerance, must_not_change: radius }
 
-[]
+# 实际签名见 fillet-failures.json（已含 fillet-notdone-overflow：S0/S2/S3 三候选 + 互斥反事实）。

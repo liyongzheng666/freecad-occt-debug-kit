@@ -48,9 +48,9 @@
 | G1 | **Agent 决策回路**（observe→定位→机制→反事实→结论） | 完全没有；流程是给人看的一次性管线 | 🔴 | A3 |
 | G2 | **Agent-native 工具接口**（typed in/out、结构化错误、统一 action surface） | 只有给人用的 CLI + shell + README | 🔴 | A2 |
 | G3 | **可执行验证**（靶向子复现 + 互斥反事实，**非 `IsDone()` 二分**） | 没有；结论无法自证 | 🔴 | A2/A3 |
-| G4 | **结构化 playbook**（症状→候选根因→区分观测的决策表） | 只有散文文档，AI 无法导航 | 🔴 | A2 |
+| G4 | **结构化 playbook**（症状→候选根因→区分观测的决策表） | ✅ `fillet-failures.json` 决策表 + `query_playbook`；investigate 据此逐候选跑判别器 | 🔴 | A2 |
 | G17 | **几何有效性 verifier**（BRepCheck + 自交 + G1 + 拓扑增量，替代 `IsDone()`） | 🟡 BRepCheck 级**已实做**（`check_valid` 走 occ-debug-mesh，真几何自测 `tools/test_check_valid.py`，14 个真实 BREP 零误报）；⏳ 面面自交（BOPAlgo_CheckerSI）+ G1/切向 + 拓扑增量待补 | 🔴 | A2 |
-| G19 | **失效本体 + 症状/阶段适配层**（playbook 骨架） | 本体已写（见 playbook/），未代码化 | 🔴 | A2 |
+| G19 | **失效本体 + 症状/阶段适配层**（playbook 骨架） | 🟡 适配层已代码化（symptom→近端阶段节点 + distal 候选 + 判别器映射）；本体多签名待扩 | 🔴 | A2 |
 | G20 | **根因三腿验证**（定位 / 机制 / 反事实，含互斥靶向修法判别） | 方法学已写（见 docs/），未实现 | 🔴 | A3 |
 | G18 | **输入预检 triage（S0 输入质量）**——agent 首发诊断 | 无 | 🟠 | A2 |
 | G5 | **根因 Eval harness**（scorer 按定位/机制/反事实/校准打分 + runner + 回归基线） | 只有"测试"harness，无"评估"harness | 🟠 | A4 |
@@ -146,8 +146,8 @@ agent/
 
 - [~] `tools/check_valid.py`：**几何有效性判据**——`BRepCheck_Analyzer` + 自交 + G1/切向 + 拓扑增量。**全项目以此为成功判据，禁用裸 `IsDone()`。** 它是 **reward signal + 一等几何活**（自交用 `BOPAlgo_CheckerSI`、G1 单独检测），配自己的测试集，非 wrapper。✅ BRepCheck 级已落地（shell out occ-debug-mesh `<base>.defects.json`，真几何自测）；⏳ 待补：BOPAlgo_CheckerSI 面面自交、G1/切向、拓扑增量。
 - [ ] `tools/triage_input.py`：S0 输入预检——沿 spine 凹凸分类、二面角、短边/sliver、容差一致性、输入 BRepCheck。**设为 agent 首发诊断动作。**
-- [ ] `tools/playbook.py`：`query_playbook(signature)` 检索决策表节点。
-- [ ] `playbook/fillet-failures.yaml`：按 `blend-failure-ontology.md` §5 schema 写 **3 条签名**（含 `proximate_stage` + `root_cause_candidates` + 互斥 `counterfactual`）。
+- [x] `tools/playbook.py`：`query_playbook(signature)` 检索决策表节点（symptom→节点，子串/全等匹配，单测覆盖）。
+- [x] `playbook/fillet-failures.json`：按 §5 schema 写签名 `fillet-notdone-overflow`（`proximate_stage` + distal→proximate 排序的 `root_cause_candidates` S0/S2/S3 + 互斥 `counterfactual`）。环境无 PyYAML → 表用 JSON，`.yaml` 留作人读 schema。
 - [ ] 工具统一规范：typed I/O、结构化错误、**每次调用落 session**（进 viewer + 进轨迹）、带 timeout。
 
 **验收**：`check_valid` 能把"`IsDone()=true` 但自交"的 case 判为无效；`triage_input` 能在 `near-tangent-faces` 上报出近切；3 条 playbook 过格式校验。
@@ -160,7 +160,7 @@ agent/
 补齐：G1、G20。
 
 - [ ] `loop/decide_rule.py`：规则版 policy。
-- [~] `loop/investigate.py`：编排 **observe(`reproduce`) → query_playbook → 定位(`triage_input`/`check_valid`) → 反事实(靶向修法重跑) → emit_conclusion**。✅ 规则版 v0 **端到端真跑**（reproduce + check_valid + 反事实半径探测）：`box r=1000` → S2 定位 + 可行上界 ∈[2,5) + S0 排除 + 未解机制如实标注；⏳ query_playbook / triage_input 尚未接（规则策略暂内联，未拆 `decide_rule.py`）。
+- [~] `loop/investigate.py`：编排 **observe(`reproduce`) → query_playbook → 定位(`triage_input`/`check_valid`) → 反事实(靶向修法重跑) → emit_conclusion**。✅ 规则版 v0 **端到端真跑**（reproduce + check_valid + 反事实半径探测）：`box r=1000` → S2 定位 + 可行上界 ∈[2,5) + S0 排除 + 未解机制如实标注；✅ query_playbook 已接（决策表驱动逐候选判别 + 互斥反事实，每候选裁定 命中/排除/未测）；⏳ triage_input 未接、规则策略暂内联（未拆 `decide_rule.py`）。
 - [x] **三腿里免埋点的两腿**（定位 + 反事实）已落：定位=输入有效性 + 失败现场；反事实=互斥靶向半径探测（判据 S6 几何有效，非 IsDone）。机制腿（S2/S3/S5 区分）留 A7/A8。
 - [x] `emit_conclusion`：输出**分级因果假设**（阶段链 + 定位深度 + 证据`source` + 置信度），经 `session.py` 落 `events.ndjson`（note/run_end）供 viewer review。
 
