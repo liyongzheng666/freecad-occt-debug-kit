@@ -24,6 +24,11 @@ def build_shape(case):
         return Part.makeBox(10, 20, 30)          # 经典盒子；最短边 10
     if case == "box-flat":
         return Part.makeBox(30, 20, 2)           # 薄板：半径稍大即 overflow
+    if case == "wedge":                          # 薄楔：两支撑面近切 ~1.7°，滚球塞不进 → StartSol echec(S2 近切)
+        import FreeCAD as App
+        V = App.Vector
+        pts = [V(0, 0, 0), V(20, 0, 0), V(20, 0, 0.6)]
+        return Part.Face(Part.makePolygon(pts + [pts[0]])).extrude(V(0, 8, 0))
     raise ValueError("unknown case: " + str(case))
 
 

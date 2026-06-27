@@ -110,6 +110,7 @@ agent/
 │   ├── scorer.py                   # 定位/机制/反事实/校准
 │   ├── eval.sh
 │   └── baselines.md
+├── demo/                           # 可视 demo：真失败几何 + 结论 → Print viewer（wedge_demo.py / view.sh）
 └── trajectories/                   # 运行轨迹（G9，gitignore）
 ```
 
