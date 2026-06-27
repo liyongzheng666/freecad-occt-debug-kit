@@ -23,10 +23,21 @@
 #   Usage:
 #     scripts/fake-occ-session.py [--session DIR] [--interval SECONDS]
 #                                 [--once] [--fresh]
+#     scripts/fake-occ-session.py [--session DIR] \
+#                                 --emit-shape-asset run-0001/shape-7.brep
+#
+#   --emit-shape-asset REL  Offline driver for the occ-mesh-daemon path
+#     (occ-mesh-daemon-plan.md §6): append a single placeholder `add` event
+#     (kind:"shape", occt-brep asset referencing REL, a bbox geometry
+#     placeholder) under a fixed run_id, so the daemon can associate the brep
+#     with an entity id and upgrade it to a real mesh. The run_id is derived
+#     from REL's leading "run-NNNN/" segment (default run-0001); the entity id
+#     is the brep's stem (e.g. "shape-7"). Append-only, never truncates.
 #
 #   Defaults: session = $OCC_DEBUG_SESSION or .occ-debug/sessions/dev
 # =====================================================================
 import argparse
+import fcntl
 import json
 import os
 import re
@@ -177,7 +188,12 @@ def scan_runs(events_path: Path) -> int:
 
 
 def append_line(events_path: Path, event: dict, run_id: str, seq: int) -> None:
-    """Append one complete event as a single atomic write (contract §3.4)."""
+    """Append one complete event as a single atomic write (contract §3.4).
+
+    flock(LOCK_EX) wraps the write so the whole line can never byte-interleave
+    with a concurrent writer (e.g. occ-mesh-daemon appending update/defect
+    events to the same file; risk N4).
+    """
     envelope = {
         "schema_version": SCHEMA_VERSION,
         "session_id": SESSION_ID,
@@ -188,9 +204,69 @@ def append_line(events_path: Path, event: dict, run_id: str, seq: int) -> None:
     }
     line = json.dumps(envelope, ensure_ascii=False) + "\n"
     with open(events_path, "a", encoding="utf-8") as handle:
-        handle.write(line)
-        handle.flush()
-        os.fsync(handle.fileno())
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            handle.write(line)
+            handle.flush()
+            os.fsync(handle.fileno())
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def emit_shape_asset(session: Path, brep_rel: str) -> int:
+    """Append one placeholder `add` (kind:shape, occt-brep asset) for a brep.
+
+    Offline driver for the occ-mesh-daemon path (plan §6). This stands in for
+    what occdbg would emit from a breakpoint: a placeholder shape carrying a
+    bbox (so the viewer draws a box immediately) plus an occt-brep asset
+    reference the daemon meshes and upgrades to a real triangle mesh.
+
+    Behaviour matches §4's placeholder add example. Append-only; never
+    truncates events.ndjson. seq is scoped to this brep's source run_id.
+    """
+    brep_rel = brep_rel.lstrip("/")
+    rel_path = Path(brep_rel)
+    # run_id from a leading "run-NNNN/" segment, else run-0001.
+    run_id = "run-0001"
+    if rel_path.parts and RUN_RE.match(rel_path.parts[0]):
+        run_id = rel_path.parts[0]
+    entity_id = rel_path.stem  # e.g. run-0001/shape-7.brep -> "shape-7"
+
+    (session / "assets").mkdir(parents=True, exist_ok=True)
+    events_path = session / "events.ndjson"
+    ensure_manifest(session)
+
+    # seq: continue this run's sequence if it already has events, else start at 1.
+    seq = 1
+    if events_path.exists():
+        highest = 0
+        for raw in events_path.open(encoding="utf-8"):
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                ev = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if ev.get("run_id") == run_id and isinstance(ev.get("seq"), int):
+                highest = max(highest, ev["seq"])
+        seq = highest + 1
+
+    add_event = {
+        "op": "add",
+        "id": entity_id,
+        "group": "debug",
+        "kind": "shape",
+        "label": f"占位 {entity_id}",
+        "geometry": {"bbox": {"min": [0, 0, 0], "max": [1, 1, 1]}},
+        "asset": {"format": "occt-brep", "path": brep_rel},
+        "metadata": {"producer": "fake-session", "placeholder": True},
+    }
+    append_line(events_path, add_event, run_id, seq)
+    print(f"[fake-session] session={session}")
+    print(f"[fake-session] emit-shape-asset run_id={run_id} seq={seq} "
+          f"id={entity_id} asset={brep_rel}")
+    return 0
 
 
 def main() -> int:
@@ -200,9 +276,17 @@ def main() -> int:
     parser.add_argument("--interval", type=float, default=0.8, help="Seconds between appended events in stream mode (default: 0.8)")
     parser.add_argument("--once", action="store_true", help="Write all events immediately, no delay")
     parser.add_argument("--fresh", action="store_true", help="Force a brand-new session file (truncate); connected viewers must refresh")
+    parser.add_argument("--emit-shape-asset", metavar="REL", default=None,
+                        help="Append one placeholder shape+occt-brep `add` for REL (relative to assets/), then exit. For the occ-mesh-daemon offline test (plan §6).")
     args = parser.parse_args()
 
     session = Path(args.session)
+
+    # Daemon-path offline driver: emit one placeholder add and exit. Leaves the
+    # default fresh/reset streaming behaviour above completely untouched.
+    if args.emit_shape_asset is not None:
+        return emit_shape_asset(session, args.emit_shape_asset)
+
     (session / "assets").mkdir(parents=True, exist_ok=True)
     events_path = session / "events.ndjson"
 
