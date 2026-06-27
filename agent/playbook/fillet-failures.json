@@ -17,6 +17,7 @@
           "stage": "S2",
           "cause": "圆角半径相对几何过大：滚球容纳不下，blend 面建不出",
           "localize": { "tool": "radius_probe", "check": "feasible_upper_bound" },
+          "truth_anchor": "ChFi3d_Builder_0.cxx:2766 ChFi3d_StripeEdgeInter — 两相邻 fillet 带 pcurve 求交有交点 → StdFail_NotDone 'fillets have too big radiuses'（LLDB truth-run，cases/box-r5.json 验证 agent 判 S2 与真值一致）",
           "counterfactual": { "fix": "lower_radius", "discriminates_from": "S3" }
         },
         {

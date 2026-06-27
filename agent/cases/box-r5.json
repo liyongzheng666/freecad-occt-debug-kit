@@ -1,0 +1,20 @@
+{
+  "_note": "instrumented truth-run GT（G22）：box r=5 全边 fillet，LLDB 抓真实崩溃点。",
+  "case_id": "box-r5",
+  "input": { "builder": "box", "dims": [10, 20, 30], "radius": 5.0, "edges": "all(12)" },
+  "ground_truth": {
+    "true_chain": ["S2", "S3"],
+    "entities": ["相邻两 fillet 带 stripe1 × stripe2（aDat1/aDat2 SurfData）"],
+    "expected_evidence": "ChFi3d_StripeEdgeInter：两带 pcurve 经 Geom2dInt_GInter 求交，NbPoints/NbSegments>0（带相互重叠）→ 抛 StdFail_NotDone",
+    "aligned_fix": "lower_radius（降到可行上界 [2,5) 内，如 r≤2 即生成有效实体）"
+  },
+  "truth_run": {
+    "method": "LLDB `br set -E c++` → 跳过 2 个 macOS Security 框架异常 → 第一个 OCCT 抛出",
+    "site": "ChFi3d_Builder_0.cxx:2766  ChFi3d_StripeEdgeInter",
+    "stack": "StripeEdgeInter ← ChFi3d_Builder::Compute(ChFi3d_Builder.cxx:324) ← BRepFilletAPI_MakeFillet::Build(:527)",
+    "exception": "StdFail_NotDone: 'StripeEdgeInter : fillets have too big radiuses'",
+    "captured": "2026-06-27, debug OCCT 7.8.1（OSO 调试映射完好，断点能绑）"
+  },
+  "agent_match": "investigate(box, r=5) → 根 S2 / radius_probe 命中可行上界[2.5,5) / S3 诚实标 untestable —— 与真值 root=S2 一致 ✅（免埋点诊断 = 埋点真值）",
+  "note_failure_mode": "这是 overflow（带重叠，交太多），非近切（交太少）。ssi_probe 的近切 S3 签名不适用于本例；radius_probe 才是对的判别器。近切 S3 需另造几何。"
+}
