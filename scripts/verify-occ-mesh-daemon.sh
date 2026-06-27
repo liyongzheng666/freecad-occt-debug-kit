@@ -199,3 +199,25 @@ if fails:
     sys.exit(1)
 print("[verify-daemon] all assertions passed (S1 + S3)")
 PY
+
+# ---- id-reuse regression: a re-used entity id pointing at a NEW brep must -----
+# re-mesh (path-based idempotency), not be skipped forever.
+REUSE_SESS="$(mktemp -d)"
+trap 'rm -rf "$SESS" "$FAIL_SESS" "$REUSE_SESS"' EXIT
+mkdir -p "$REUSE_SESS/assets/run-0001" "$REUSE_SESS/assets/run-0002"
+"$BIN" --make-test-box "$REUSE_SESS/assets/run-0001/reuse.brep" >/dev/null 2>&1
+python3 "$HERE/fake-occ-session.py" --session "$REUSE_SESS" --emit-shape-asset run-0001/reuse.brep >/dev/null
+OCC_DEBUG_MESH_BIN="$BIN" python3 "$HERE/occ-mesh-daemon.py" --session "$REUSE_SESS" --once >/dev/null
+"$BIN" --make-test-nonmanifold "$REUSE_SESS/assets/run-0002/reuse.brep" >/dev/null 2>&1
+python3 "$HERE/fake-occ-session.py" --session "$REUSE_SESS" --emit-shape-asset run-0002/reuse.brep >/dev/null
+OCC_DEBUG_MESH_BIN="$BIN" python3 "$HERE/occ-mesh-daemon.py" --session "$REUSE_SESS" --once >/dev/null
+OCC_DM_REUSE="$REUSE_SESS" python3 - <<'PY'
+import json, os, sys
+ev = [json.loads(l) for l in open(os.path.join(os.environ["OCC_DM_REUSE"], "events.ndjson")) if l.strip()]
+ups = [e for e in ev if e.get("op") == "update" and e.get("id") == "reuse"]
+paths = sorted(u["patch"]["asset"]["path"] for u in ups)
+ok = len(ups) == 2 and paths == ["run-0001/reuse.mesh.json", "run-0002/reuse.mesh.json"]
+print(f"[{'PASS' if ok else 'FAIL'}] re-used id re-meshes a new brep  ({len(ups)} updates: {paths})")
+sys.exit(0 if ok else 1)
+PY
+echo "[verify-daemon] all assertions passed (S1 + S3 + id-reuse)"

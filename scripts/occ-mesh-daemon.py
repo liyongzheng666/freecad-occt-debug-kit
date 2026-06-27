@@ -112,8 +112,13 @@ class Daemon:
         self.session_id = None
         # Per-mesh-run monotonic seq, namespaced by our own run_id "<run>/mesh".
         self._seq_by_run = {}
-        # entity ids we have already emitted an update for (idempotency).
-        self.emitted = set()
+        # Idempotency is keyed by the BREP/mesh PATH, not the entity id — so a
+        # debug session re-using an id for NEW geometry (a fresh capture under a
+        # new run) re-meshes instead of being skipped forever.
+        #   handled        brep rel paths processed this process (meshed/failed)
+        #   meshed_assets  mesh asset paths that already have an update in the log
+        self.handled = set()
+        self.meshed_assets = set()
 
     # ---- events.ndjson tail -> brep2id / session_id ---------------------
     def scan_events(self) -> None:
@@ -149,13 +154,15 @@ class Daemon:
                 # Reconstruct OUR run namespace from events a prior daemon wrote,
                 # so a restart stays monotonic (V1) and never re-emits an update
                 # (idempotency, plan §8): track the seq high-water mark per
-                # "<run>/mesh", and remember which entity ids already got an update.
+                # "<run>/mesh", and which MESH ASSETS already have an update.
                 if isinstance(run_id, str) and run_id.endswith("/mesh"):
                     seq = ev.get("seq")
                     if isinstance(seq, int):
                         self._seq_by_run[run_id] = max(self._seq_by_run.get(run_id, 0), seq)
-                    if ev.get("op") == "update" and isinstance(ev.get("id"), str):
-                        self.emitted.add(ev["id"])
+                    if ev.get("op") == "update":
+                        mesh_asset = ((ev.get("patch") or {}).get("asset") or {}).get("path")
+                        if isinstance(mesh_asset, str) and mesh_asset:
+                            self.meshed_assets.add(mesh_asset)
                 if ev.get("op") != "add":
                     continue
                 asset = ev.get("asset")
@@ -177,16 +184,24 @@ class Daemon:
         orig_run = info.get("run_id") or "run-0001"
         mesh_run = f"{orig_run}/mesh"  # plan §3/V1: independent run namespace
         rel_brep = asset_rel_path(self.assets, brep)
+        mesh_rel = asset_rel_path(self.assets, mesh_json)
 
-        # Idempotency: an update for this id is already in the log (this process
-        # OR replayed from a prior daemon — see scan_events).
-        if ent_id in self.emitted:
+        # Idempotency keyed by the BREP/mesh PATH (not the entity id): a re-used
+        # id pointing at a NEW brep re-meshes; only the SAME brep is skipped.
+        if rel_brep in self.handled:
             return False
-        if mesh_json.exists():
-            # Mesh on disk but no update in the log: a prior daemon crashed
-            # between writing the mesh and appending its update. Recover by
-            # emitting from the existing mesh — do NOT re-run the mesher (§8).
+        # A mesh is "current" when it exists and is at least as new as its brep;
+        # an overwritten (newer) brep re-meshes (re-capture of the same path).
+        mesh_current = mesh_json.exists() and mesh_json.stat().st_mtime >= brep.stat().st_mtime
+        if mesh_current:
+            if mesh_rel in self.meshed_assets:
+                self.handled.add(rel_brep)  # update already in the log (restart/replay)
+                return False
+            # Mesh on disk + current, but no update in the log: a prior daemon
+            # crashed between meshing and appending. Recover from the mesh (§8).
             rel, sha, n_def = self._emit_from_mesh(mesh_run, ent_id, base, mesh_json)
+            self.handled.add(rel_brep)
+            self.meshed_assets.add(mesh_rel)
             self._log_emit("recovered", ent_id, rel, sha, n_def)
             return True
 
@@ -202,25 +217,27 @@ class Daemon:
             # N6: process timeout -> keep the placeholder, emit a capture_failure
             # note (not an update). Mark emitted so we don't re-spawn every tick.
             self.append_note(mesh_run, ent_id, rel_brep, f"timeout after {self.timeout:g}s")
-            self.emitted.add(ent_id)
+            self.handled.add(rel_brep)
             sys.stderr.write(f"[occ-mesh-daemon] timeout meshing {rel_brep}\n")
             return False
         except OSError as exc:
             self.append_note(mesh_run, ent_id, rel_brep, f"spawn failed: {exc}")
-            self.emitted.add(ent_id)
+            self.handled.add(rel_brep)
             sys.stderr.write(f"[occ-mesh-daemon] spawn failed for {rel_brep}: {exc}\n")
             return False
         if proc.returncode != 0 or not mesh_json.exists():
             # N6: process failure -> keep placeholder, capture_failure note, no update.
             detail = self._tail_stderr(proc.stderr) or f"exit {proc.returncode}"
             self.append_note(mesh_run, ent_id, rel_brep, f"exit {proc.returncode}: {detail}")
-            self.emitted.add(ent_id)
+            self.handled.add(rel_brep)
             sys.stderr.write(f"[occ-mesh-daemon] mesher failed (rc={proc.returncode}) for {rel_brep}\n")
             return False
 
         # Success. A partial mesh (partial=true, some failed_faces) is NOT a
         # failure: still emit the update with whatever meshed, plus defects (N6).
         rel, sha, n_def = self._emit_from_mesh(mesh_run, ent_id, base, mesh_json)
+        self.handled.add(rel_brep)
+        self.meshed_assets.add(mesh_rel)
         self._log_emit("meshed", ent_id, rel, sha, n_def)
         return True
 
@@ -235,7 +252,6 @@ class Daemon:
         uv = self.fold_uv(base) if self.with_uv else None
         self.append_update(mesh_run, ent_id, rel, sha, uv)
         n_def = self.append_defects(mesh_run, ent_id, base)
-        self.emitted.add(ent_id)
         return rel, sha, n_def
 
     @staticmethod
