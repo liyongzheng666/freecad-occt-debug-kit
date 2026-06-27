@@ -159,9 +159,9 @@ agent/
 补齐：G1、G20。
 
 - [ ] `loop/decide_rule.py`：规则版 policy。
-- [ ] `loop/investigate.py`：编排 **observe(`reproduce`) → query_playbook → 定位(`triage_input`/`check_valid`) → 反事实(靶向修法重跑) → emit_conclusion**。
-- [ ] 先实现**三腿里免埋点能做的两腿**（定位 + 反事实）；机制证据这一腿对 S0/S6 用 BRepCheck 输出即可。
-- [ ] `emit_conclusion`：输出**分级因果假设**——定位深度 + 证据(artifact id + `source:line`) + 置信度，落进 viewer 供 review。
+- [~] `loop/investigate.py`：编排 **observe(`reproduce`) → query_playbook → 定位(`triage_input`/`check_valid`) → 反事实(靶向修法重跑) → emit_conclusion**。✅ 规则版 v0 **端到端真跑**（reproduce + check_valid + 反事实半径探测）：`box r=1000` → S2 定位 + 可行上界 ∈[2,5) + S0 排除 + 未解机制如实标注；⏳ query_playbook / triage_input 尚未接（规则策略暂内联，未拆 `decide_rule.py`）。
+- [x] **三腿里免埋点的两腿**（定位 + 反事实）已落：定位=输入有效性 + 失败现场；反事实=互斥靶向半径探测（判据 S6 几何有效，非 IsDone）。机制腿（S2/S3/S5 区分）留 A7/A8。
+- [x] `emit_conclusion`：输出**分级因果假设**（阶段链 + 定位深度 + 证据`source` + 置信度），经 `session.py` 落 `events.ndjson`（note/run_end）供 viewer review。
 
 **验收**：对 `near-tangent-faces` 端到端跑出"S0 近切→（诱发 S3）；证据：二面角 <ε + 求交 0 线；靶向修法：heal 输入有效、降半径无效"，并在 viewer 可点开 review。
 **面试价值**：项目从"管线"翻成"会做根因调研"的拐点；规则版同时是 eval 下限基线。

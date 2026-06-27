@@ -50,18 +50,26 @@ def main():
               "is_done": None, "bad_shape": None}
     try:
         shape = build_shape(case)
-        edges = select_edges(shape, os.environ.get("REPRO_EDGES", ""))
-        try:
-            filleted = shape.makeFillet(radius, edges)
-            result["is_done"] = True
+        if radius <= 0:                           # 仅导出基础几何（S0 输入预检用），不 fillet
+            result["is_done"] = None
+            result["phase"] = "input_export"
             if out_brep:
-                filleted.exportBrep(out_brep)
+                shape.exportBrep(out_brep)
                 result["bad_shape"] = out_brep
-            result["status"] = "ok"              # 跑完产出形状；有效性留给 check_valid
-        except Exception as e:                    # fillet 算法失败（典型 StdFail_NotDone）
-            result["is_done"] = False
-            result["exception"] = type(e).__name__ + ": " + str(e)
-            result["phase"] = phase_of(str(e))
+            result["status"] = "ok"
+        else:
+            edges = select_edges(shape, os.environ.get("REPRO_EDGES", ""))
+            try:
+                filleted = shape.makeFillet(radius, edges)
+                result["is_done"] = True
+                if out_brep:
+                    filleted.exportBrep(out_brep)
+                    result["bad_shape"] = out_brep
+                result["status"] = "ok"          # 跑完产出形状；有效性留给 check_valid
+            except Exception as e:                # fillet 算法失败（典型 StdFail_NotDone）
+                result["is_done"] = False
+                result["exception"] = type(e).__name__ + ": " + str(e)
+                result["phase"] = phase_of(str(e))
     except Exception as e:                         # harness/几何构建本身崩
         result["exception"] = "harness: " + type(e).__name__ + ": " + str(e)
         result["phase"] = "harness"
