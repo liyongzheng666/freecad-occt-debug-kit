@@ -49,7 +49,7 @@
 | G2 | **Agent-native 工具接口**（typed in/out、结构化错误、统一 action surface） | 只有给人用的 CLI + shell + README | 🔴 | A2 |
 | G3 | **可执行验证**（靶向子复现 + 互斥反事实，**非 `IsDone()` 二分**） | 没有；结论无法自证 | 🔴 | A2/A3 |
 | G4 | **结构化 playbook**（症状→候选根因→区分观测的决策表） | 只有散文文档，AI 无法导航 | 🔴 | A2 |
-| G17 | **几何有效性 verifier**（BRepCheck + 自交 + G1 + 拓扑增量，替代 `IsDone()`） | 仅有 BRepCheck 雏形；注意它是 **reward signal + 一等几何活**（非 wrapper） | 🔴 | A2 |
+| G17 | **几何有效性 verifier**（BRepCheck + 自交 + G1 + 拓扑增量，替代 `IsDone()`） | 🟡 BRepCheck 级**已实做**（`check_valid` 走 occ-debug-mesh，真几何自测 `tools/test_check_valid.py`，14 个真实 BREP 零误报）；⏳ 面面自交（BOPAlgo_CheckerSI）+ G1/切向 + 拓扑增量待补 | 🔴 | A2 |
 | G19 | **失效本体 + 症状/阶段适配层**（playbook 骨架） | 本体已写（见 playbook/），未代码化 | 🔴 | A2 |
 | G20 | **根因三腿验证**（定位 / 机制 / 反事实，含互斥靶向修法判别） | 方法学已写（见 docs/），未实现 | 🔴 | A3 |
 | G18 | **输入预检 triage（S0 输入质量）**——agent 首发诊断 | 无 | 🟠 | A2 |
@@ -142,7 +142,7 @@ agent/
 
 补齐：G2、G3、G4、G17、G18、G19。
 
-- [ ] `tools/check_valid.py`：**几何有效性判据**——`BRepCheck_Analyzer` + 自交 + G1/切向 + 拓扑增量。**全项目以此为成功判据，禁用裸 `IsDone()`。** 它是 **reward signal + 一等几何活**（自交用 `BOPAlgo_CheckerSI`、G1 单独检测），配自己的测试集，非 wrapper。
+- [~] `tools/check_valid.py`：**几何有效性判据**——`BRepCheck_Analyzer` + 自交 + G1/切向 + 拓扑增量。**全项目以此为成功判据，禁用裸 `IsDone()`。** 它是 **reward signal + 一等几何活**（自交用 `BOPAlgo_CheckerSI`、G1 单独检测），配自己的测试集，非 wrapper。✅ BRepCheck 级已落地（shell out occ-debug-mesh `<base>.defects.json`，真几何自测）；⏳ 待补：BOPAlgo_CheckerSI 面面自交、G1/切向、拓扑增量。
 - [ ] `tools/triage_input.py`：S0 输入预检——沿 spine 凹凸分类、二面角、短边/sliver、容差一致性、输入 BRepCheck。**设为 agent 首发诊断动作。**
 - [ ] `tools/playbook.py`：`query_playbook(signature)` 检索决策表节点。
 - [ ] `playbook/fillet-failures.yaml`：按 `blend-failure-ontology.md` §5 schema 写 **3 条签名**（含 `proximate_stage` + `root_cause_candidates` + 互斥 `counterfactual`）。
