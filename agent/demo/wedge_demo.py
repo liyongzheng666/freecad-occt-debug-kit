@@ -12,6 +12,8 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 from pathlib import Path
 
 from agent.contracts import ToolResult
@@ -35,14 +37,29 @@ except Exception as e:
 """
 
 
+def _mesh_once() -> None:
+    """跑 occ-mesh-daemon --once：把抓到的 brep 网格化 + append update 事件，
+    让 session 自洽可看（不必另起长驻 daemon）。"""
+    mesher = REPO / "tools" / "occ-debug-mesh" / "build" / "occ-debug-mesh"
+    daemon = REPO / "scripts" / "occ-mesh-daemon.py"
+    if not mesher.exists() or not daemon.exists():
+        print("[demo] 跳过网格化（occ-debug-mesh / daemon 不在）——viewer 只会显示占位框")
+        return
+    env = dict(os.environ)
+    env["OCC_DEBUG_MESH_BIN"] = str(mesher)
+    r = subprocess.run(["python3", str(daemon), "--session", str(SESSION), "--once"],
+                       env=env, capture_output=True, text=True, timeout=180)
+    last = (r.stdout.strip().splitlines() or ["(no output)"])[-1]
+    print("[demo] mesh --once:", last)
+
+
 def _launch_hint() -> str:
     return (
-        "\n──────── 看 Print viewer ────────\n"
-        f"export OCC_DEBUG_SESSION={SESSION}\n"
-        "scripts/occ-debug-start.sh start                 # daemon：把抓到的 brep 网格化\n"
-        f"python3 tools/Print/bridge/bridge.py --session {SESSION} &   # bridge :7341\n"
-        "( cd tools/Print && npm run dev )                # viewer :5777\n"
-        "浏览器打开 http://127.0.0.1:5777/   或直接： agent/demo/view.sh\n"
+        "\n──────── 看 Print viewer（session 已网格化，自洽可看）────────\n"
+        f"  python3 tools/Print/bridge/bridge.py --session {SESSION} &   # bridge :7341\n"
+        "  ( cd tools/Print && npm run dev )                # viewer :5777\n"
+        "  浏览器打开 http://127.0.0.1:5777/\n"
+        "  —— 或一键： agent/demo/view.sh\n"
     )
 
 
@@ -70,6 +87,9 @@ def main() -> int:
             print(f"[demo] ssi: near_tangent={rep.near_tangent} dihedral={rep.min_dihedral_deg}deg")
     except Exception as e:  # noqa: BLE001 — demo 容错：capture 不可用仍出结论
         print(f"[demo] capture 跳过（{type(e).__name__}: {e}）——仍出 agent 结论。")
+
+    # 1b) 网格化抓到的面（否则 viewer 只有原点占位框 → 看不见真几何）
+    _mesh_once()
 
     # 2) agent 离线诊断 wedge → 结论 emit 进 session（tool notes + run_end）
     print("[demo] investigate(wedge, r=1.0) ...")
