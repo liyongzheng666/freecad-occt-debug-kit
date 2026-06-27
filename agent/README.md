@@ -64,7 +64,7 @@
 | G10 | **review → 标注写回 + 一致率指标** | review 面有，标注回路无 | 🟠 | A6 |
 | G25 | **结论→viewer 事件桥 / 发射缝**（`Conclusion`/`Evidence` 的 artifact_id/source → viewer 可渲染事件） | ✅ `session.py` 全实做：`emit_tool_result`→note / `emit_conclusion`→run_end，过 `event.schema.json` 校验 + 离线自测（`test_session.py`） | 🟠 | A3/A6 |
 | G11 | **成本度量**（tool-call 数 / wall-clock / 重跑成本） | 无 | 🟠 | A4 |
-| G23 | **SSI 靶向探针（S3）**：capture 两面 + 跑独立 `IntTools` 复现 | 无 | 🟡 | A7 |
+| G23 | **SSI 靶向探针（S3）**：capture 两面 + 跑独立 `IntTools` 复现 | 🟡 探针**已实做**（`ssi_probe` 真跑面面求交→S3 签名，4 夹具判别自测）；capture 两面（occdbg/LLDB）仍欠 | 🟡 | A7 |
 | G12 | **置信度 / 主动弃权 + abstention precision** | 设计有（"人工兜底"），机制无 | 🟡 | A8 |
 | G13 | **真实 capture 前半管线**（occdbg / LLDB 动态命令 / FCStd baseline / instrumentation patch） | 设计有（架构 M2/M3），未实现 | 🟡 | A7/A8 |
 | G14 | **SurfData/corner 深探针（S2/S4）** | 依赖 G13 | 🟡 | A8 |
@@ -98,7 +98,8 @@ agent/
 │   ├── _fillet_harness.py          # FreeCAD 进程内 fillet harness（env 驱动，非 agent 包）
 │   ├── check_valid.py              # 几何有效性判据（替代 IsDone）
 │   ├── triage_input.py             # S0 输入预检（二面角/短边/sliver/容差）
-│   ├── ssi_probe.py                # S3 靶向子复现（抽两面跑 IntTools）（A7）
+│   ├── ssi_probe.py                # S3 靶向子复现（面面求交+近切角→S3签名）（A7）
+│   ├── _ssi_harness.py             # FreeCAD 进程内 SSI harness（env 驱动，非 agent 包）
 │   └── playbook.py                 # query_playbook 检索
 ├── loop/                           # agent 决策回路（G1/G20）
 │   ├── decide_rule.py              # 规则版 policy（eval 下限基线）
@@ -211,8 +212,8 @@ agent/
 
 补齐：G23、G13（一部分）。
 
-- [ ] capture 失败现场相撞的两张面（轻量埋点 / occdbg）。
-- [ ] `tools/ssi_probe.py`：**靶向子复现**——脱离 ChFi3d 单独跑 `IntTools`/`GeomInt`，记录交线条数 vs 期望（**机制证据**这一腿落地）。
+- [ ] capture 失败现场相撞的两张面（轻量埋点 / occdbg / LLDB）——**仍欠**（深埋点，A7 的 capture 接缝；本分支 `occ-capture-lldb` 有 LLDB capture 底座可接）。
+- [x] `tools/ssi_probe.py`：**靶向子复现**——脱离 ChFi3d 单独跑面面求交（`intersectSS` + `section` + 近切角），**S3 机制证据落地**：近切 + 期望接触却 0 → S3 签名。✅ 4 夹具判别自测（横切/割→否、切→否、近切离开→是），`test_ssi_probe.py`。
 - [ ] playbook 补 S3 节点的 `localize`/`mechanism`/`counterfactual`（容差扰动 vs 降半径互斥判别 S3/S2）。
 - [ ] eval 加 SSI 分层 case。
 

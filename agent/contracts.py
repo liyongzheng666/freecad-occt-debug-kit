@@ -82,6 +82,24 @@ class ToolResult:
 
 
 @dataclass
+class SSIReport:
+    """ssi_probe() 结果：脱离 ChFi3d 的面面求交机制证据（A7 / G23）。
+
+    S3 失效签名：期望 ≥1 条横切 contact 曲线，实得 0 或退化（intersectSS 条数塌缩），
+    且两面近切（min_dihedral_deg < tangent_eps）。clean 横切（section 实得边 ≥1 且
+    夹角不近 0）则 **S3 可排除**——失败应归 S2（blend 面建不出）或 S5（缝合）。
+    """
+    n_curves_ss: int                  # 无界曲面 intersectSS 交线条数
+    n_section_edges: int              # 有界面 section 实得 contact 边数
+    min_dihedral_deg: float           # 接触/最近点两面法线夹角（近切度量）
+    gap: float                        # 两面最近距离（distToShape）
+    near_tangent: bool                # min_dihedral_deg < tangent_eps
+    degenerate_contact: bool          # 期望 contact 但 section 0
+    s3_signature: bool                # near_tangent 且 degenerate_contact → S3 机制命中
+    notes: str = ""
+
+
+@dataclass
 class Evidence:
     """一条可被 review 的证据，锚到 artifact + source:line（架构 R6）。"""
     summary: str
