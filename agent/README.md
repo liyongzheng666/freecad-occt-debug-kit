@@ -95,6 +95,7 @@ agent/
 │   └── schema.md
 ├── tools/                          # agent-native typed 工具（G2/G3/G17/G18）
 │   ├── reproduce.py                # FreeCADCmd recompute；real + replay 双后端
+│   ├── _fillet_harness.py          # FreeCAD 进程内 fillet harness（env 驱动，非 agent 包）
 │   ├── check_valid.py              # 几何有效性判据（替代 IsDone）
 │   ├── triage_input.py             # S0 输入预检（二面角/短边/sliver/容差）
 │   ├── ssi_probe.py                # S3 靶向子复现（抽两面跑 IntTools）（A7）
@@ -129,8 +130,8 @@ agent/
 
 - [ ] `cases/schema.md`：输入（FCStd / 脚本化 BREP + 半径 + 选中边）+ **四元组 GT**（真崩阶段、涉及实体、期望中间态、与因对齐的靶向修法）。
 - [ ] **分层** case（每层 ≥2 个）：凹/凸 × 单边/链/顶点 × 定/变半径 × clean/overflow。先覆盖：`box-concave-r-large`(S3/S2)、`near-tangent-faces`(S0→S3)、`vertex-3corner`(S4)、`short-edge`(S0/S1)。
-- [ ] `tools/reproduce.py`：跑 FreeCADCmd recompute → 结构化 `RunEnd{status, exception, phase, faulty_contours, faulty_vertices, bad_shape}`（§24）。
-- [ ] **record/replay 双后端**：real 跑真 FreeCADCmd；replay 读已录制 `RunEnd` → eval 不必每次拉重型栈。
+- [x] `tools/reproduce.py`：跑 FreeCADCmd recompute → 结构化 `RunEnd{status, exception, phase, …, bad_shape, is_done}`（§24）。✅ 真跑 FreeCADCmd（env 驱动 `_fillet_harness.py`，box/box-flat case + 任意半径/边）；**status=跑完产形状 ≠ 有效**（有效性归 check_valid），自测 `test_reproduce.py`。
+- [x] **record/replay 双后端**：real 跑真 FreeCADCmd；replay 读已录制 `RunEnd`（brep 一并录入 → 自洽）→ eval 不必每次拉重型栈。
 - [ ] **instrumented truth run**：埋点版跑出每个 case 的"真崩阶段+实体"，作为 GT 标签来源。
 
 **验收**：分层 case 各能产出结构化 `RunEnd`；GT 四元组齐备；replay 后端离线复现一致。
