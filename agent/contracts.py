@@ -52,12 +52,18 @@ class ValidityReport:
 
 @dataclass
 class TriageReport:
-    """triage_input() 结果：S0 输入预检（G18）。"""
+    """triage_input() 结果：S0 输入预检 + 失效分类判别（G18）。
+
+    min_dihedral_deg / min_support_curv_radius 是把 fillet-notdone 的 S2 失败分成
+    geometric(近切 / r>曲率) vs algorithmic(overflow, 可 SSI 互裁) 的判别量。
+    """
     sliver_faces: list = field(default_factory=list)
     short_edges: list = field(default_factory=list)
-    near_tangent_pairs: list = field(default_factory=list)   # (faceA, faceB, dihedral)
+    near_tangent_pairs: list = field(default_factory=list)   # (edge_i, dihedral_deg)
     tolerance_outliers: list = field(default_factory=list)
     convexity: dict = field(default_factory=dict)            # edge_id -> "convex" | "concave"
+    min_dihedral_deg: float = 180.0                          # 最小二面角；小=有近切边
+    min_support_curv_radius: Optional[float] = None          # 支撑面最小曲率半径（平面=None）
 
 
 @dataclass

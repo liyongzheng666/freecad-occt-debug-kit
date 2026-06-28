@@ -21,6 +21,9 @@ from agent.contracts import (
 from agent.tools.check_valid import check_valid
 from agent.tools.playbook import query_playbook
 from agent.tools.reproduce import reproduce
+from agent.tools.triage_input import triage_input
+
+_NEAR_TANGENT_EPS_DEG = 10.0
 
 # 反事实半径阶梯（requested 的降序倍数）；停在首个"可行"半径即得可行上界
 _CF_FRACTIONS = [0.5, 0.2, 0.1, 0.05, 0.02, 0.005, 0.002]
@@ -117,6 +120,44 @@ def _verdicts_to_evidence(node, run, radius, verdicts):
     return evs
 
 
+def _classify_s2_failure(case, radius, node, sink, verbose):
+    """S2(radius_probe 命中)失败的细分：triage_input → 三态之一。
+
+    返回 (class_key, class_dict, why) 或 None。
+    geometric_near_tangent: 支撑面近切(min_dihedral 小) → 降半径/heal。
+    geometric_curvature   : r > 支撑面凹曲率半径 → 降半径/改输入。
+    algorithmic_overflow  : 否则(平面非近切) → 两圆角重叠，可 SSI 互裁(几何可救)。
+    """
+    classes = node.get("failure_classes")
+    if not classes:
+        return None
+    try:
+        t = triage_input(case)
+    except Exception as e:  # noqa: BLE001 — triage 不可用则不细分
+        _log(verbose, f"  triage 跳过（{type(e).__name__}），不细分失效类别")
+        return None
+    sink.append(ToolResult(
+        tool="triage_input", ok=True,
+        summary=f"min_dihedral={t.min_dihedral_deg}deg min_curv={t.min_support_curv_radius}",
+        payload={"min_dihedral_deg": t.min_dihedral_deg, "min_support_curv_radius": t.min_support_curv_radius},
+        source="agent/tools/triage_input.py"))
+
+    if 0.0 <= t.min_dihedral_deg < _NEAR_TANGENT_EPS_DEG:
+        key = "geometric_near_tangent"
+        why = f"支撑面近切（最小二面角 {t.min_dihedral_deg}° < {_NEAR_TANGENT_EPS_DEG}°）"
+    elif t.min_support_curv_radius is not None and radius > t.min_support_curv_radius:
+        key = "geometric_curvature"
+        why = f"r={radius} > 支撑面凹曲率半径 {t.min_support_curv_radius}"
+    else:
+        key = "algorithmic_overflow"
+        why = f"平面/非近切/无曲率约束（最小二面角 {t.min_dihedral_deg}°）"
+    info = classes.get(key)
+    if info is None:
+        return None
+    _log(verbose, f"  失效分类：{key} —— {why}")
+    return key, info, why
+
+
 def _diagnose_via_playbook(case, radius, run, out, sink, verbose) -> Conclusion:
     """按 symptom 命中 playbook 节点，逐候选跑判别器，取最 distal 命中者为根。"""
     sig = {"exception": run.exception or "", "phase": run.phase, "is_done": run.is_done}
@@ -142,14 +183,33 @@ def _diagnose_via_playbook(case, radius, run, out, sink, verbose) -> Conclusion:
     root = Stage(cand["stage"])
     prox = Stage(node["proximate_stage"])
     chain = [root] if root == prox else [root, prox]
-    cf = cand.get("counterfactual", {})
-    cf_tail = (f"；互斥于 {cf['discriminates_from']}" if cf.get("discriminates_from")
-               else (f"；保持 {cf['must_not_change']} 不变" if cf.get("must_not_change") else ""))
+    evidence = _verdicts_to_evidence(node, run, radius, verdicts)
+
+    # S2 命中 → 进一步细分失效类别（geometric 降半径 / algorithmic 可 SSI 互裁）
+    cls = _classify_s2_failure(case, radius, node, sink, verbose) if cand["stage"] == "S2" else None
+    if cls is not None:
+        key, info, why = cls
+        cause = f"{cand['cause']}。失效类别【{key}】：{info['cause']}（{why}）"
+        salv = info.get("salvageable")
+        counterfactual = (f"修法：{info['fix']}"
+                          + ("（几何可救，非降半径）" if salv else "（降半径之外无解）"))
+        evidence.append(Evidence(
+            f"失效分类 {key}（salvageable={salv}）：{why} → 修法 {info['fix']}",
+            source="agent/playbook/fillet-failures.json"))
+        conf = 0.7
+    else:
+        cf = cand.get("counterfactual", {})
+        cf_tail = (f"；互斥于 {cf['discriminates_from']}" if cf.get("discriminates_from")
+                   else (f"；保持 {cf['must_not_change']} 不变" if cf.get("must_not_change") else ""))
+        cause = cand["cause"]
+        counterfactual = f"{cf.get('fix', '?')}（{ev}）{cf_tail}"
+        conf = 0.6
+
     return Conclusion(hypotheses=[CausalHypothesis(
-        stage=root, chain=chain, cause=cand["cause"],
-        localization_depth="stage", confidence=0.6,
-        counterfactual=f"{cf.get('fix', '?')}（{ev}）{cf_tail}",
-        evidence=_verdicts_to_evidence(node, run, radius, verdicts),
+        stage=root, chain=chain, cause=cause,
+        localization_depth="stage", confidence=conf,
+        counterfactual=counterfactual,
+        evidence=evidence,
     )])
 
 

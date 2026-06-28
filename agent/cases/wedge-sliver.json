@@ -13,7 +13,8 @@
     "true_chain": ["S2"],
     "entities": ["两支撑面 HS1/HS2（底面 × 斜面），沿长底边近切"],
     "expected_evidence": "ChFi3d_Builder::StartSol 试 nbessaimax 次找不到起始解 → throw Standard_Failure('StartSol echec'); 支撑面夹角约 1.72°，半径 1.0 的滚球塞不进",
-    "aligned_fix": "lower_radius（缩到滚球能容纳的半径）或 heal 近切（增大夹角）"
+    "aligned_fix": "lower_radius（缩到滚球能容纳的半径）或 heal 近切（增大夹角）",
+    "failure_class": "geometric_near_tangent"
   },
   "truth_run": {
     "method": "LLDB `br set -E c++` 第一个 OCCT 抛出 → StartSol；再 capture_ssi 抓 HS1->Face()/HS2->Face() 跑 ssi_probe",

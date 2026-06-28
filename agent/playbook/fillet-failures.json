@@ -27,7 +27,28 @@
           "mechanism": { "evidence": "期望 1 条 contact 曲线，实得 0；两面近切" },
           "counterfactual": { "fix": "perturb_tolerance", "must_not_change": "radius" }
         }
-      ]
+      ],
+      "failure_classes": {
+        "_note": "S2(radius_probe 命中)失败的细分——investigate 用 triage_input 的 min_dihedral_deg / min_support_curv_radius 判：geometric=降半径/改输入才有解；algorithmic=几何可救(SSI 互裁)。对应 review:demo agent/demo/convex_concave。",
+        "geometric_near_tangent": {
+          "discriminator": "min_dihedral_deg < near_tangent_eps",
+          "cause": "支撑面近切，滚球坐不住起始解（StartSol echec）",
+          "fix": "lower_radius 或 heal 近切（增大夹角）",
+          "salvageable": false
+        },
+        "geometric_curvature": {
+          "discriminator": "fillet_radius > min_support_curv_radius",
+          "cause": "r > 局部凹曲率半径，球比孔/凹腔还大、塞不进",
+          "fix": "lower_radius（≤曲率半径）或 改输入孔径",
+          "salvageable": false
+        },
+        "algorithmic_overflow": {
+          "discriminator": "else（平面、非近切、无曲率约束）",
+          "cause": "两相邻圆角面重叠（StripeEdgeInter 'too big radiuses'），几何可裁剪",
+          "fix": "SSI 互裁（trim）或 perturb_tolerance；降半径亦可但非必需",
+          "salvageable": true
+        }
+      }
     }
   ]
 }

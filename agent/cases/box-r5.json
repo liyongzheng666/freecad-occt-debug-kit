@@ -6,7 +6,8 @@
     "true_chain": ["S2", "S3"],
     "entities": ["相邻两 fillet 带 stripe1 × stripe2（aDat1/aDat2 SurfData）"],
     "expected_evidence": "ChFi3d_StripeEdgeInter：两带 pcurve 经 Geom2dInt_GInter 求交，NbPoints/NbSegments>0（带相互重叠）→ 抛 StdFail_NotDone",
-    "aligned_fix": "lower_radius（降到可行上界 [2,5) 内，如 r≤2 即生成有效实体）"
+    "aligned_fix": "SSI 互裁(trim)：两相邻圆角面求交+互裁得合法结果（algorithmic_overflow，几何可救）；降半径(≤可行上界[2,5))亦可但非必需",
+    "failure_class": "algorithmic_overflow"
   },
   "truth_run": {
     "method": "LLDB `br set -E c++` → 跳过 2 个 macOS Security 框架异常 → 第一个 OCCT 抛出",
