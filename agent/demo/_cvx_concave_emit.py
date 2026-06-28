@@ -45,7 +45,14 @@ def emit_vector(origin, direction, ent_id, group, label, color, length=4.0):
 
 def emit_edge(p0, p1, ent_id, group, label, color):
     cap._append(SESSION, op="add", id=ent_id, group=group, kind="polyline", label=label,
-                geometry={"points": [list(p0), list(p1)]}, style={"color": color, "line_width": 6})
+                geometry={"points": [list(p0), list(p1)]}, style={"color": color, "line_width": 8})
+
+
+def emit_ball(center, ent_id, group, label, color, radius, opacity=0.55):
+    # 实心球：用 point kind（viewer 直接 SphereGeometry(size=radius) 渲染，不走网格资产异步换图）。
+    cap._append(SESSION, op="add", id=ent_id, group=group, kind="point", label=label,
+                geometry={"position": list(center)},
+                style={"color": color, "size": radius, "opacity": opacity})
 
 
 def note(msg):
@@ -77,9 +84,11 @@ def scene(solid, edge_xy, n1, n2, sign, group, tag):
     cc = (mid[0] + sign * R * (n1[0] + n2[0]),
           mid[1] + sign * R * (n1[1] + n2[1]),
           mid[2] + sign * R * (n1[2] + n2[2]))
-    emit_shape(Part.makeSphere(R, V(*cc)), group + "/ball", group,
-               tag + " rolling ball r=%.1f" % R, ORANGE, opacity=0.4)
+    emit_ball(cc, group + "/ball", group, tag + " rolling ball r=%.1f" % R, ORANGE, R)
 
+
+# 清场：每次 run 用相同 id，先清掉上一 run 的对象，避免 reducer 的"重复 ID"拒绝
+cap._append(SESSION, op="clear_scene", include_protected=True)
 
 # ── 凸：方块外棱 90°，球在材料内侧削棱，外法向 +x / -y（背着球岔开）──
 note("【凸圆角 convex】方块外棱(材料夹角90°<180°)：两面外法向【岔开】(背着材料/背着球)；"
@@ -103,8 +112,8 @@ emit_vector(mid, (0, 0, 1), G + "/n1", G, "floor outward normal", YEL)   # 楼�
 emit_vector(mid, (1, 0, 0), G + "/n2", G, "left-wall outward normal", YEL)  # 左墙法向 +x（指向球）
 RF = 3.0
 cc = (58.0 + RF, 6.0, 6.0 + RF)  # (61,6,9)：坐左底角 → 右伸到 x=64，穿过右墙 x=62
-emit_shape(Part.makeSphere(RF, V(*cc)), G + "/ball", G,
-           "ball r=3 (diam 6 > slot 4 -> cannot fit; pokes through right wall)", "#ff4d4d", opacity=0.5)
+emit_ball(cc, G + "/ball", G,
+          "ball r=3 (diam 6 > slot 4 -> cannot fit; pokes through right wall x=62)", "#ff4d4d", RF, opacity=0.5)
 note("【凹+大半径 失败】窄槽宽4：内角是凹的，但 r=3→直径6 > 槽宽4，滚球塞不进底角"
      "(红球右半穿过对面墙 x=62)→ makeFillet 抛 StdFail_NotDone。对比同槽 r≤2 能成。")
 
