@@ -92,5 +92,22 @@ note("【凹圆角 concave】L 形内角(材料夹角270°>180°)：两面外法
      "滚球 r=2 卡在【缺口空腔】(27,7,5)，把内角填圆。")
 scene(L, (25.0, 5.0), (1, 0, 0), (0, 1, 0), +1, "concave", "concave")
 
-note("对照口诀：法向【岔开】=凸(削棱,球在料内)；法向【对冲指向球】=凹(填角,球在空腔)。")
-print("[cvx-concave] emitted convex(left ~x0-10) + concave(right ~x20-40)")
+# ── 凹 + 大半径【失败】：窄槽宽4，r=3 → 直径6>4，球塞不进底角（StdFail_NotDone，实测）──
+G = "concave-fail"
+chan = Part.makeBox(20, 12, 10, V(50, 0, 0)).cut(Part.makeBox(4, 14, 6, V(58, -1, 6)))  # 槽 x[58,62]
+emit_shape(chan, G + "/solid", G, "slot block (width 4)", "#8a93a8", opacity=0.22)
+emit_edge((58, 0, 6), (58, 12, 6), G + "/edgeL", G, "inner bottom edge @ left wall", RED)
+emit_edge((62, 0, 6), (62, 12, 6), G + "/edgeR", G, "inner bottom edge @ right wall", RED)
+mid = (58.0, 6.0, 6.0)
+emit_vector(mid, (0, 0, 1), G + "/n1", G, "floor outward normal", YEL)   # 楼板法向 +z（指向球）
+emit_vector(mid, (1, 0, 0), G + "/n2", G, "left-wall outward normal", YEL)  # 左墙法向 +x（指向球）
+RF = 3.0
+cc = (58.0 + RF, 6.0, 6.0 + RF)  # (61,6,9)：坐左底角 → 右伸到 x=64，穿过右墙 x=62
+emit_shape(Part.makeSphere(RF, V(*cc)), G + "/ball", G,
+           "ball r=3 (diam 6 > slot 4 -> cannot fit; pokes through right wall)", "#ff4d4d", opacity=0.5)
+note("【凹+大半径 失败】窄槽宽4：内角是凹的，但 r=3→直径6 > 槽宽4，滚球塞不进底角"
+     "(红球右半穿过对面墙 x=62)→ makeFillet 抛 StdFail_NotDone。对比同槽 r≤2 能成。")
+
+note("对照口诀：法向【岔开】=凸(削棱,球在料内)；法向【对冲指向球】=凹(填角,球在空腔)；"
+     "凹但半径过大→直径>可用宽度→球塞不进→失败。")
+print("[cvx-concave] emitted convex(x0-10) + concave-ok(x20-40) + concave-fail(x50-70)")
