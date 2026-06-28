@@ -49,6 +49,12 @@ def emit_edge(p0, p1, ent_id, group, label, color):
                 geometry={"points": [list(p0), list(p1)]}, style={"color": color, "line_width": 8})
 
 
+def emit_ball(center, ent_id, group, label, color, radius, opacity=0.5):
+    # 仅【几何真·不可能】用球：直观显示"滚球比可用空间大、塞不进"。point kind 直接渲染实心球。
+    cap._append(SESSION, op="add", id=ent_id, group=group, kind="point", label=label,
+                geometry={"position": list(center)}, style={"color": color, "size": radius, "opacity": opacity})
+
+
 def note(msg):
     cap._append(SESSION, op="note", level="info", message=msg)
 
@@ -126,5 +132,19 @@ note("【重叠·可裁剪】窄槽宽4，左右两圆角面(r=3)在中间重叠
      "'too big radiuses')。但这**不是几何不可能**——两面 SSI 求交+互裁即得合法结果(中间一条 ridge)。"
      "故根因是【算法放弃】，对应反事实修法是【SSI 互裁】而非简单【降半径】。真·不可能见 README(r>凹曲率)。")
 
-note("看圆角面：橙=真实圆角(凸削棱/凹填角) / 红=OCCT放弃(重叠可裁剪)；外法向：岔开=凸 / 对冲指向缺口=凹。")
-print("[cvx-concave] convex + concave-ok + overlap-trimmable (fillet surfaces, no ball)")
+# ── 几何真·不可能：盲孔半径3，r=4>3，滚球比孔大塞不进（实测 r≤3 成 / r=4 抛 NotDone）──
+G4 = "geom-impossible"
+pocket_solid = Part.makeBox(16, 16, 10, V(80, 0, 0)).cut(Part.makeCylinder(3, 8, V(88, 8, 3)))
+emit_shape(pocket_solid, G4 + "/solid", G4, "blind pocket (radius 3, depth 7)", "#8a93a8", 0.16)
+_rim = [(88 + 3 * math.cos(2 * math.pi * i / 48), 8 + 3 * math.sin(2 * math.pi * i / 48), 3.0) for i in range(48)]
+cap._append(SESSION, op="add", id=G4 + "/rim", group=G4, kind="polyline",
+            label="bottom concave rim (R=3)", geometry={"points": [list(p) for p in _rim], "closed": True},
+            style={"color": RED, "line_width": 8})
+emit_ball((88, 8, 7), G4 + "/ball", G4, "ball r=4 > pocket R=3 -> cannot fit inside", REDF, 4.0, 0.5)
+note("【几何真·不可能】盲孔半径3：r=4>3，滚球比孔还大、塞不进孔底内角→**不存在有效圆角面**"
+     "（SSI 互裁也没有对象可裁）→ makeFillet 抛 StdFail_NotDone。实测 r≤3 能成、r=4 失败。"
+     "唯一出路：降半径(≤3)或改孔径——这才是降半径之外无解的硬失败，区别于第三例(可裁剪)。")
+
+note("四态：①橙=真实圆角(能成,凸削棱/凹填角) ②红重叠面=算法放弃(可SSI互裁) ③红球>孔=几何不可能(只能降半径)。"
+     "外法向：岔开=凸 / 对冲指向缺口=凹。")
+print("[cvx-concave] convex + concave-ok + overlap-trimmable + geom-impossible")
