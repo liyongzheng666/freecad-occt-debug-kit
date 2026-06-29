@@ -29,6 +29,15 @@ def build_shape(case):
         V = App.Vector
         pts = [V(0, 0, 0), V(20, 0, 0), V(20, 0, 0.6)]
         return Part.Face(Part.makePolygon(pts + [pts[0]])).extrude(V(0, 8, 0))
+    if case == "pocket":                         # 盲孔 r=3：凹腔曲率半径 3，fillet r>3 的滚球比孔还大 → S2 geometric(曲率)
+        import FreeCAD as App
+        V = App.Vector
+        return Part.makeBox(16, 16, 10).cut(Part.makeCylinder(3, 8, V(8, 8, 3)))
+    if case == "wedge-thin":                     # 极薄楔 ~0.011°：可行半径低于 radius_probe 阶梯下限(0.2%×requested) → 候选全 ruled_out/untestable → loop 内弃权
+        import FreeCAD as App
+        V = App.Vector
+        pts = [V(0, 0, 0), V(20, 0, 0), V(20, 0, 0.004)]
+        return Part.Face(Part.makePolygon(pts + [pts[0]])).extrude(V(0, 8, 0))
     raise ValueError("unknown case: " + str(case))
 
 
@@ -84,4 +93,8 @@ def main():
         json.dump(result, fp, ensure_ascii=False)
 
 
-main()
+# reproduce 经 `FreeCADCmd _fillet_harness.py` + REPRO_OUT_JSON 驱动时跑 main()；
+# capture 的 fail_script 仅 `from _fillet_harness import build_shape`（无该 env）→ 不自动跑，
+# 否则 import 即触发 main() 读不到 REPRO_OUT_JSON 而抛、脚本在 makeFillet 前就死（断点不命中）。
+if os.environ.get("REPRO_OUT_JSON"):
+    main()

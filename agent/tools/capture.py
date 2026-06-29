@@ -30,6 +30,20 @@ _FC = _REPO / "FreeCAD" / "build" / "debug" / "bin" / "FreeCADCmd"
 _FC_DIR = _REPO / "FreeCAD"
 _OCC_LIB = _REPO / "occt" / "install" / "debug" / "lib"
 _OCC_CAPTURE = _REPO / "scripts" / "occ_capture.py"
+_TOOLS_DIR = Path(__file__).resolve().parent       # 含 _fillet_harness.py（fail_script 复用其 build_shape）
+
+# 已知失败现场的 SSI capture spec，按 **agent case 串**键控（与 _fillet_harness.build_shape 同约定）。
+# 只登记 LLDB truth-run 验证过、句柄具名可抓的现场——box overflow 的 StripeEdgeInter 两带在匿名
+# DStr 里（见记忆 fillet-overflow-crash-site），无法干净取面，故不登记 → 该处 SSI 判别照实 untestable。
+CAPTURE_SPECS = {
+    # 薄楔近切：StartSol，HS1/HS2 = Handle(BRepAdaptor_Surface) 两支撑面，具名可抓。
+    # 见 cases/wedge-sliver.json truth_run + 记忆 fillet-startsol-capture-point（2026-06-27 验证）。
+    "wedge": {
+        "breakpoint": "ChFi3d_Builder_2.cxx:944",
+        "face_a_expr": "HS1->Face()",
+        "face_b_expr": "HS2->Face()",
+    },
+}
 
 
 def _pixi() -> str:
@@ -40,6 +54,44 @@ def _resolve() -> None:
     missing = [str(p) for p in (_FC, _OCC_LIB, _OCC_CAPTURE) if not p.exists()]
     if missing:
         raise FileNotFoundError("LLDB capture 前置缺失：" + ", ".join(missing))
+
+
+def prereqs_ok() -> bool:
+    """LLDB capture 前置（debug FreeCAD/OCCT + occ_capture）是否齐备（缺则调用方应弃权，不伪绿）。"""
+    try:
+        _resolve()
+        return True
+    except FileNotFoundError:
+        return False
+
+
+def capture_spec_for(case: str):
+    """返回该 agent case 的 SSI capture spec（断点 + 两面表达式），未登记则 None。"""
+    return CAPTURE_SPECS.get(case)
+
+
+def make_fail_script(case: str, radius: float, *, edges: str = "", out_dir=None) -> str:
+    """生成一个会触发该 case fillet 失败的 FreeCAD 脚本路径（供 capture 的断点命中）。
+
+    复用 `_fillet_harness.build_shape/select_edges` 这一份几何真源（不重复构建逻辑）：
+    脚本在 FreeCADCmd 内 build → makeFillet，断点在 OCCT 内命中后由 occ_emit_shape 抓面。
+    """
+    d = Path(out_dir or tempfile.mkdtemp(prefix="failscript_"))
+    d.mkdir(parents=True, exist_ok=True)
+    script = d / f"fail_{case}_r{radius}.py"
+    script.write_text(
+        "import sys\n"
+        f"sys.path.insert(0, {str(_TOOLS_DIR)!r})\n"
+        "from _fillet_harness import build_shape, select_edges\n"
+        f"shape = build_shape({case!r})\n"
+        f"edges = select_edges(shape, {edges!r})\n"
+        "try:\n"
+        f"    shape.makeFillet({float(radius)!r}, edges)\n"
+        "except Exception as e:\n"
+        "    print('FILLET_EXC', type(e).__name__, e)\n",
+        encoding="utf-8",
+    )
+    return str(script)
 
 
 def capture(fail_script, breakpoint, emits, *, session_dir=None, timeout_s=300) -> dict:

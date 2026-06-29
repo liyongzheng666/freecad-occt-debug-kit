@@ -61,21 +61,25 @@ def main():
     per = []
     min_dih = 180.0
     min_rad = float("inf")
+    min_rad_face = None                          # 最小凹曲率支撑面的 shape.Faces 序号（曲率型失效现场）
     for i, e in enumerate(shape.Edges):
-        faces = [f for f in shape.Faces if any(te.isSame(e) for te in f.Edges)]
-        if len(faces) < 2:
+        fidx = [j for j, f in enumerate(shape.Faces) if any(te.isSame(e) for te in f.Edges)]
+        if len(fidx) < 2:
             continue
+        f0, f1 = shape.Faces[fidx[0]], shape.Faces[fidx[1]]
         mid = e.valueAt((e.FirstParameter + e.LastParameter) / 2.0)
         try:
-            d = _dihedral(faces[0], faces[1], mid)
+            d = _dihedral(f0, f1, mid)
         except Exception:
             continue
-        r = min(_curv_radius(faces[0]), _curv_radius(faces[1]))
+        r0, r1 = _curv_radius(f0), _curv_radius(f1)
+        r = min(r0, r1)
         per.append({"edge": i, "dihedral_deg": round(d, 3),
                     "support_curv_radius": (None if r == float("inf") else round(r, 3))})
         min_dih = min(min_dih, d)
         if r < min_rad:
             min_rad = r
+            min_rad_face = fidx[0] if r0 <= r1 else fidx[1]
 
     result = {
         "case": case,
@@ -83,6 +87,7 @@ def main():
         "min_dihedral_deg": round(min_dih, 3),
         "near_tangent_edges": [p for p in per if p["dihedral_deg"] < 10.0],
         "min_support_curv_radius": (None if min_rad == float("inf") else round(min_rad, 3)),
+        "min_support_curv_face": min_rad_face,
     }
     with open(out, "w") as fp:
         json.dump(result, fp, ensure_ascii=False)

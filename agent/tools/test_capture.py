@@ -1,14 +1,18 @@
-"""capture 桥集成自测（真跑 lldb，~5s）：python -m agent.tools.test_capture
+"""capture 桥自测：python -m agent.tools.test_capture
 
-在已确认命中的 BRepFilletAPI_MakeFillet::Add 断点抓被 fillet 的边 → 真 BREP。
-前置缺失（无 debug FreeCAD/OCCT/occ_capture）→ SKIP 退 0。
+两段：
+1) 纯逻辑（始终跑，无需 LLDB）——capture_spec_for / make_fail_script。
+2) 真跑 lldb（~5s，缺 debug FreeCAD/OCCT/occ_capture → SKIP 退 0）——边 capture +
+   wedge 近切现场 capture_ssi（StartSol HS1/HS2，见记忆 fillet-startsol-capture-point）。
 """
 from __future__ import annotations
 
 import tempfile
 from pathlib import Path
 
-from agent.tools.capture import _resolve, capture
+from agent.tools.capture import (
+    _resolve, capture, capture_spec_for, capture_ssi, make_fail_script,
+)
 
 _FAIL_FILLET = """import Part
 box = Part.makeBox(10, 20, 30)
@@ -20,18 +24,36 @@ except Exception as e:
 
 
 def main() -> int:
-    try:
-        _resolve()
-    except FileNotFoundError as e:
-        print(f"SKIP: {e}")
-        return 0
-
     fails = []
 
     def check(name, cond):
         print(("PASS " if cond else "FAIL ") + name)
         if not cond:
             fails.append(name)
+
+    # —— 1) 纯逻辑（无需 LLDB）——
+    spec = capture_spec_for("wedge")
+    check("wedge 有登记 capture 现场", spec is not None)
+    check("wedge 断点 = StartSol", spec and spec["breakpoint"] == "ChFi3d_Builder_2.cxx:944")
+    check("wedge 两面表达式具名", spec and spec["face_a_expr"] == "HS1->Face()"
+          and spec["face_b_expr"] == "HS2->Face()")
+    check("box overflow 无登记现场（匿名 DStr）", capture_spec_for("box") is None)
+
+    with tempfile.TemporaryDirectory(prefix="failscript_") as d:
+        sp = Path(make_fail_script("wedge", 1.0, out_dir=d))
+        body = sp.read_text(encoding="utf-8")
+        check("fail_script 落盘", sp.exists())
+        check("fail_script 复用 build_shape", "from _fillet_harness import build_shape" in body)
+        check("fail_script 调 makeFillet(r)", "shape.makeFillet(1.0" in body)
+        check("fail_script 锁定 case", 'build_shape(\'wedge\')' in body or 'build_shape("wedge")' in body)
+
+    # —— 2) 真跑 lldb（缺前置 → SKIP，不算失败）——
+    try:
+        _resolve()
+    except FileNotFoundError as e:
+        print(f"\nSKIP lldb 集成: {e}")
+        print(f"\n{'ALL PASS' if not fails else str(len(fails)) + ' FAILED: ' + ', '.join(fails)}")
+        return 1 if fails else 0
 
     with tempfile.TemporaryDirectory(prefix="cap_test_") as d:
         script = Path(d) / "fail_fillet.py"
@@ -42,6 +64,14 @@ def main() -> int:
             p = Path(got["capdemo/edgeE"])
             check("BREP 落盘非空", p.exists() and p.stat().st_size > 0)
             check("是合法 OCCT BREP", p.read_text(errors="replace").startswith("DBRep_DrawableShape"))
+
+        # wedge 近切现场 capture_ssi → 真支撑面跑 ssi_probe（truth_run：1.72° near_tangent）
+        spec = capture_spec_for("wedge")
+        fail_wedge = make_fail_script("wedge", 1.0, out_dir=d)
+        rep = capture_ssi(fail_wedge, spec["breakpoint"], spec["face_a_expr"], spec["face_b_expr"],
+                          tangent_eps_deg=10.0)
+        check("wedge capture_ssi 近切命中", rep.near_tangent and 0.0 < rep.min_dihedral_deg < 10.0)
+        check("wedge 非 S3（section 有 contact 边）", not rep.s3_signature and rep.n_section_edges >= 1)
 
     print(f"\n{'ALL PASS' if not fails else str(len(fails)) + ' FAILED: ' + ', '.join(fails)}")
     return 1 if fails else 0

@@ -4,10 +4,15 @@
 
 ## 1. Case 输入
 
-每个 case 一个目录 `cases/<case_id>/`：
+每个 case 一个 **JSON 文件** `cases/<case_id>.json`（当前真值 case 走脚本化构造，故单文件即可；
+若改用 `input.brep` 落盘资产再升级为目录）。一个 case 文件含：
 
-- `input.brep`（或脚本化构造）+ `params.json`：半径、选中边、blend 类型。
-- `runend.replay.json`：录制的 `RunEnd`，供 reproduce 的 replay 后端（G7）。
+- `input`：脚本化构造参数（builder / dims / radius / edges）——人读，记录这个 case 长什么样。
+- `agent_run`：**eval runner 据此驱动 investigate** —— `{ "case": <harness builder id>, "radius": <float> }`。
+  注意 `case` 是 `_fillet_harness.py` 认得的 builder id（如 `box` / `wedge`），**可能 ≠ `input.builder`**
+  （如 wedge-sliver 的 input.builder=`wedge_prism`，agent_run.case=`wedge`）。runner 只跑带 `agent_run` 的文件。
+- `truth_run`（可选）：instrumented LLDB 真崩点，作 GT 标签来源（G22）。
+- `replay` fixture：reproduce 的 replay 后端读 `<record_dir>/<case>__r<radius>.json`（G7），让 eval 离线复现不拉重型栈。
 
 ## 2. 难度分层标签（G21）
 
@@ -15,20 +20,24 @@
 
 ## 3. Ground Truth（四元组，G22）
 
-`gt.json`（多由 instrumented truth run 产出；早期用"构造已知根因的合成 case"手工标）：
+case 文件里的 `ground_truth` 块（多由 instrumented truth run 产出；早期用"构造已知根因的合成 case"手工标）：
 
 ```json
-{
+"ground_truth": {
   "true_chain": ["S0", "S3"],
   "entities": ["Face1", "Face2"],
   "expected_evidence": "两面二面角 < ε（S0 近切）→ SSI 得 0 条 contact 曲线（S3）",
-  "aligned_fix": { "op": "heal_input", "must_not_change": "radius" }
+  "aligned_fix": "heal_input（容差），保持 radius 不变",
+  "failure_class": "geometric_near_tangent"
 }
 ```
 
 > **因果链已转正**（缺口1）：`true_chain` 为 distal→proximate（如 S0 近切 → 诱发 S3 求交失败）；
 > 单阶段则单元素 `["S3"]`。`aligned_fix` 与**根**（`true_chain[0]`）对齐。
 > scorer 对链给部分得分（命中根=满分，只命中症状=部分分；见 `contracts.GroundTruth.root_stage / symptom_stage`）。
+> **`failure_class`（A4）**：失效三态之一（`algorithmic_overflow` / `geometric_near_tangent` / `geometric_curvature`，与 playbook
+> `failure_classes` 同枚举）。scorer 据此判"失效分类准确率"——免埋点诊断能跑到的最深判别（决定靶向修法是否对症）。
+> GT 未标则该维不参与（None，不假绿）。
 
 ## 4. 首批 case（A1）
 

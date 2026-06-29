@@ -2,9 +2,11 @@
   "_note": "instrumented truth-run GT（G22）：box r=5 全边 fillet，LLDB 抓真实崩溃点。",
   "case_id": "box-r5",
   "input": { "builder": "box", "dims": [10, 20, 30], "radius": 5.0, "edges": "all(12)" },
+  "agent_run": { "case": "box", "radius": 5.0 },
   "ground_truth": {
     "true_chain": ["S2", "S3"],
-    "entities": ["相邻两 fillet 带 stripe1 × stripe2（aDat1/aDat2 SurfData）"],
+    "entities": ["stripe1@S2", "stripe2@S2"],
+    "entities_human": "相邻两 fillet 带 stripe1 × stripe2（aDat1/aDat2 SurfData）——S2 中间面，免埋点诊断无法命名（triage 只看输入边/面），需 A7 capture 抓活几何才能回填这俩 token。故 box 当前 entity 召回应为 0、定位止于 stage——这正是 capture 相对免埋点的实体级定位增量。",
     "expected_evidence": "ChFi3d_StripeEdgeInter：两带 pcurve 经 Geom2dInt_GInter 求交，NbPoints/NbSegments>0（带相互重叠）→ 抛 StdFail_NotDone",
     "aligned_fix": "SSI 互裁(trim)：两相邻圆角面求交+互裁得合法结果（algorithmic_overflow，几何可救）；降半径(≤可行上界[2,5))亦可但非必需",
     "failure_class": "algorithmic_overflow"

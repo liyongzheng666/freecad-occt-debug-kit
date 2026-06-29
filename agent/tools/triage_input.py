@@ -43,4 +43,5 @@ def triage_input(case_id: str, *, near_tangent_eps_deg: float = 10.0, timeout_s:
         near_tangent_pairs=[(p["edge"], p["dihedral_deg"]) for p in d_.get("near_tangent_edges", [])],
         min_dihedral_deg=d_.get("min_dihedral_deg", 180.0),
         min_support_curv_radius=d_.get("min_support_curv_radius"),
+        min_support_curv_face=d_.get("min_support_curv_face"),
     )

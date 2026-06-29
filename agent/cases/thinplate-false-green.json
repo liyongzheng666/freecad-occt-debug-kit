@@ -1,0 +1,28 @@
+{
+  "_note": "区分度 case（false-green / 代理奖励陷阱）：薄板双面 fillet 半径过大 → 上下 fillet 重叠自交，但 OCCT 返回 is_done=True。裸 IsDone() 会误判成功；check_valid 才抓得到。测铁律『成功判据=几何有效性，不是 IsDone()』，且根 S3/S2 非 S2-NotDone 类。",
+  "case_id": "thinplate-false-green",
+  "input": {
+    "builder": "box-flat",
+    "dims": [30, 20, 2],
+    "radius": 1.5,
+    "edges": "all",
+    "note": "2mm 薄板，r=1.5 双面 fillet：1.5+1.5=3 > 2 厚 → 对面 blend 面重叠自交。r≤0.8 有效 / r=1.0 抛 NotDone / r=1.2,1.5 false-green(is_done=True 但自交 8 处)。"
+  },
+  "agent_run": { "case": "box-flat", "radius": 1.5 },
+  "ground_truth": {
+    "true_chain": ["S2", "S3"],
+    "entities": [],
+    "entities_human": "自交子形状是一大票面/边（check_valid 实测 self_intersection 8 处 + 25 error）；不按精确子形状集合计 entity（无意义），定位由 stage 维承载。真根实体＝两张过大的 blend 面（对面 fillet），免埋点未单独命名。",
+    "expected_evidence": "reproduce: is_done=True（OCCT 自认完成）但 check_valid: valid=False，self_intersection 8 处 + open_boundary/other 共 25 error。根因 r=1.5 在 2mm 厚板上双面 fillet 1.5+1.5>2 → 两 blend 面重叠（S2 半径过大）→ 自交（S3 症状）。lower_radius 至 ≤0.8 即有效（佐证根在半径/S2）。",
+    "aligned_fix": "lower_radius（≤ 半板厚，使对面 fillet 不重叠）。",
+    "failure_class": null,
+    "expected_abstain": false
+  },
+  "truth_run": {
+    "method": "reproduce + check_valid 边界扫描（非 LLDB；false-green 由 BRepCheck 自交直接判，不需埋点）",
+    "probe_evidence": "box-flat r=0.5/0.8 → is_done=True valid=True；r=1.0 → StdFail_NotDone；r=1.2/1.5 → is_done=True 但 valid=False(selfX=8)。有效→NotDone→false-green 三段，证明根是半径相对板厚过大（S2），自交是症状（S3）。",
+    "captured": "2026-06-28"
+  },
+  "agent_match": "investigate(box-flat, r=1.5) → 分支 B：reproduce is_done=True → check_valid 判 invalid(selfX=8) → 结论 root=S3『代理奖励陷阱：is_done=True 但无效』。✅ 正确抓住 false-green（不信 IsDone）= correct_commit；但只定位到症状 S3、未回溯 S2 根（branch B 不跑 radius_probe）→ scorer 给症状部分分（0.4）。",
+  "note_discrimination": "本 case 的多重区分价值：① 测铁律『禁用裸 IsDone』——一个信 IsDone 的 policy 会判'成功'(漏检)，规则版抓出无效。② 根 S3 非 S2——首个非 S2 根 case。③ **首个触发 scorer 症状-only 部分分（0.4）的 case**——agent 停在 S3 症状未达 S2 根，正好量出'免埋点 branch-B 定位偏浅'。改进项（非本轮）：false-green 检出后也跑 radius_probe 回溯 S2 根 + 携带 lower_radius 反事实。"
+}

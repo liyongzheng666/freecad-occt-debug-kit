@@ -64,6 +64,7 @@ class TriageReport:
     convexity: dict = field(default_factory=dict)            # edge_id -> "convex" | "concave"
     min_dihedral_deg: float = 180.0                          # 最小二面角；小=有近切边
     min_support_curv_radius: Optional[float] = None          # 支撑面最小曲率半径（平面=None）
+    min_support_curv_face: Optional[int] = None              # 上述最小凹曲率支撑面的 OCCT 面序号（曲率型失效现场，实体级定位）
 
 
 @dataclass
@@ -129,6 +130,7 @@ class CausalHypothesis:
     evidence: list[Evidence] = field(default_factory=list)
     counterfactual: Optional[str] = None                     # 靶向修法及其结果
     confidence: float = 0.0
+    failure_class: Optional[str] = None                      # 失效三态：algorithmic_overflow / geometric_near_tangent / geometric_curvature（playbook failure_classes）
 
     def __post_init__(self):
         if not self.chain:
@@ -153,17 +155,47 @@ class GroundTruth:
     true_chain 是因果链 distal→proximate（如 [S0, S3]：S0 近切诱发 S3 求交失败）；
     单阶段则单元素 [S3]。scorer 对链做部分得分：命中根=满分，只命中症状=部分分。
     """
-    true_chain: list[Stage]                           # 因果链 distal→proximate；单阶段 [S3]
+    true_chain: list[Stage]                           # 因果链 distal→proximate；单阶段 [S3]；clean/弃权 case 为 []
     entities: list[str]
     expected_evidence: str
     aligned_fix: str                                  # 与该因（根）对齐的靶向修法（可执行）
+    failure_class: Optional[str] = None               # 真值失效类别（playbook failure_classes 同枚举）；scorer 据此判"失效分类准确率"
+    expected_abstain: bool = False                    # 正确行为是弃权（如 clean 输入无缺陷）→ scorer 判 abstention 而非定位；hallucinate 根因＝false_commit
 
     @property
-    def root_stage(self) -> Stage:
-        """最远端（根）阶段——真正先崩的那一层。"""
-        return self.true_chain[0]
+    def root_stage(self) -> Optional[Stage]:
+        """最远端（根）阶段——真正先崩的那一层；无根（弃权 case）则 None。"""
+        return self.true_chain[0] if self.true_chain else None
 
     @property
-    def symptom_stage(self) -> Stage:
-        """最近端（症状）阶段——异常被抛出的那一层。"""
-        return self.true_chain[-1]
+    def symptom_stage(self) -> Optional[Stage]:
+        """最近端（症状）阶段——异常被抛出的那一层；无根（弃权 case）则 None。"""
+        return self.true_chain[-1] if self.true_chain else None
+
+
+@dataclass
+class Review:
+    """人工对一条 agent 结论的裁定（A6 / G10）——review 面 O(1) 定性输入。
+
+    verdict：
+      confirm —— 认同 agent 结论（含"认同它正确弃权"）。
+      correct —— agent 至少一维错；给真根 / 真失效类 / 真实体（未给的维表"该维不纠"）。
+      reject  —— agent 不该下这个结论（在无缺陷输入上幻觉了根因）→ 应弃权。
+
+    apply_review（agent/review.py）据此算 人-agent **一致率**（喂 A4）+ 产 **GT 标注**（喂 A1）。
+    """
+    reviewer: str
+    verdict: str                                      # "confirm" | "correct" | "reject"
+    target: str = ""                                  # 被 review 的 run/case 标识
+    corrected_root: Optional[Stage] = None            # verdict=correct 时给真根（不给＝根不纠）
+    corrected_failure_class: Optional[str] = None     # 同上，失效类别
+    corrected_entities: list[str] = field(default_factory=list)
+    note: str = ""
+
+
+@dataclass
+class ReviewOutcome:
+    """apply_review 结果：一致率（per-dim + overall）+ 人工裁定落成的 GT 标注。"""
+    verdict: str
+    agreement: dict                                   # {"root": bool, "failure_class": bool|None, "overall": bool}
+    annotation: GroundTruth                           # 人工真值 → 可直接喂 scorer / 沉淀成 case GT

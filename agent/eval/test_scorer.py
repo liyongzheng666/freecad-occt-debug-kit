@@ -12,22 +12,23 @@ from agent.eval.scorer import score
 S0, S2, S3, S5 = Stage.S0_INPUT, Stage.S2_SURFACE, Stage.S3_SSI, Stage.S5_SEW
 
 
-def _gt() -> GroundTruth:
+def _gt(failure_class=None) -> GroundTruth:
     # 真因果链 S0 近切 → 诱发 S3 求交失败；涉及两张面
     return GroundTruth(
         true_chain=[S0, S3],
         entities=["faceA", "faceB"],
         expected_evidence="期望 1 条 contact 曲线，实得 0",
         aligned_fix="heal 输入（容差），非降半径",
+        failure_class=failure_class,
     )
 
 
-def _concl(stage, chain, *, entities=(), depth="stage", conf=0.5, cf=None, abstain=False):
+def _concl(stage, chain, *, entities=(), depth="stage", conf=0.5, cf=None, fc=None, abstain=False):
     if abstain:
         return Conclusion(abstained=True, abstain_reason="证据不足")
     h = CausalHypothesis(
         stage=stage, cause="t", chain=list(chain), entities=list(entities),
-        localization_depth=depth, counterfactual=cf, confidence=conf,
+        localization_depth=depth, counterfactual=cf, confidence=conf, failure_class=fc,
     )
     return Conclusion(hypotheses=[h])
 
@@ -84,10 +85,41 @@ def main() -> int:
     check("counterfactual carried → None", score(_concl(S0, [S0, S3], cf="heal"), gt)["counterfactual"] is None)
     check("counterfactual absent → 0.0", _approx(score(_concl(S0, [S0, S3]), gt)["counterfactual"], 0.0))
 
-    # 9) 弃权：localization 0、机制/反事实/校准 None
+    # 9) 缺陷却弃权（wrong_abstain）：定位 n/a（不混入定位准确率，惩罚归 abstention），其余维 None
     r = score(_concl(None, None, abstain=True), gt)
-    check("abstain → localization 0", _approx(r["localization"], 0.0))
+    check("defect+abstain → localization n/a(None)", r["localization"] is None)
+    check("defect+abstain → wrong_abstain", r["abstention"] == "wrong_abstain")
     check("abstain → mechanism/calibration None", r["mechanism"] is None and r["calibration"] is None)
+    check("abstain → failure_class None", r["failure_class"] is None)
+
+    # 10) 失效分类：GT 标了类别时——精确命中 1.0 / 判错 0.0 / 预测未给 None
+    gt_fc = _gt(failure_class="algorithmic_overflow")
+    hit = score(_concl(S0, [S0, S3], fc="algorithmic_overflow"), gt_fc)["failure_class"]
+    wrong = score(_concl(S0, [S0, S3], fc="geometric_near_tangent"), gt_fc)["failure_class"]
+    none_pred = score(_concl(S0, [S0, S3], fc=None), gt_fc)["failure_class"]
+    check("failure_class hit → 1.0", _approx(hit, 1.0))
+    check("failure_class wrong → 0.0 (不洗白判错)", _approx(wrong, 0.0))
+    check("failure_class pred-missing → None", none_pred is None)
+    # GT 未标 failure_class（如 box 只标了链）→ 即便预测给了也不参与（None）
+    check("failure_class gt-unlabeled → None",
+          score(_concl(S0, [S0, S3], fc="algorithmic_overflow"), gt)["failure_class"] is None)
+
+    # 11) 弃权四态（abstention，区分度 case 的核心判别）
+    clean = GroundTruth(true_chain=[], entities=[], expected_evidence="无缺陷",
+                        aligned_fix="无", expected_abstain=True)
+    # clean + 弃权 = correct_abstain；定位 n/a（不罚），其余维 None
+    r = score(_concl(None, None, abstain=True), clean)
+    check("clean+abstain → correct_abstain", r["abstention"] == "correct_abstain")
+    check("clean+abstain → localization n/a(None)", r["localization"] is None)
+    # clean + 下结论 = false_commit（幻觉根因）→ 定位 0 罚
+    r = score(_concl(S2, [S2]), clean)
+    check("clean+commit → false_commit", r["abstention"] == "false_commit")
+    check("clean+commit → localization 0(罚)", _approx(r["localization"], 0.0))
+    # 缺陷 case + 弃权 = wrong_abstain（漏检）；缺陷 + 下结论 = correct_commit
+    check("defect+abstain → wrong_abstain",
+          score(_concl(None, None, abstain=True), gt)["abstention"] == "wrong_abstain")
+    check("defect+commit → correct_commit",
+          score(_concl(S0, [S0, S3]), gt)["abstention"] == "correct_commit")
 
     print(f"\n{'ALL PASS' if not fails else str(len(fails)) + ' FAILED: ' + ', '.join(fails)}")
     return 1 if fails else 0

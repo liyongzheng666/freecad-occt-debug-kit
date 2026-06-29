@@ -9,9 +9,11 @@
     "edges": "all",
     "note": "薄楔：底面与斜面沿长底边近切（斜率 0.6/20 → 夹角约 1.7°）"
   },
+  "agent_run": { "case": "wedge", "radius": 1.0 },
   "ground_truth": {
     "true_chain": ["S2"],
-    "entities": ["两支撑面 HS1/HS2（底面 × 斜面），沿长底边近切"],
+    "entities": ["edge#0"],
+    "entities_human": "近切失效现场 = 长底边 edge#0（底面 HS1 × 斜面 HS2 沿之近切 ~1.72°）。canonical token 用 triage 的确定性 OCCT 边序号；其 1.718° 与 truth_run LLDB 实测 1.72° 同一处，故非循环。",
     "expected_evidence": "ChFi3d_Builder::StartSol 试 nbessaimax 次找不到起始解 → throw Standard_Failure('StartSol echec'); 支撑面夹角约 1.72°，半径 1.0 的滚球塞不进",
     "aligned_fix": "lower_radius（缩到滚球能容纳的半径）或 heal 近切（增大夹角）",
     "failure_class": "geometric_near_tangent"

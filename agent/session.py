@@ -17,7 +17,7 @@ import os
 import time
 from pathlib import Path
 
-from .contracts import CausalHypothesis, Conclusion, Stage, ToolResult
+from .contracts import CausalHypothesis, Conclusion, Review, Stage, ToolResult
 
 SCHEMA_VERSION = "1.0"
 
@@ -92,6 +92,7 @@ class SessionWriter:
             "cause": h.cause,
             "entities": list(h.entities),
             "localization_depth": h.localization_depth,
+            "failure_class": h.failure_class,
             "counterfactual": h.counterfactual,
             "confidence": h.confidence,
             "evidence": [
@@ -150,3 +151,23 @@ class SessionWriter:
             "hypotheses": [self._hypothesis_dict(h) for h in conclusion.hypotheses],
         }
         return self._emit("run_end", status=status, message=message, summary=summary)
+
+    def emit_review(self, review: Review, *, target_run_id: str, target_seq: int) -> dict:
+        """Review → `review` 事件（op=review 需 verdict）——把人工裁定写回 session（A6/G10）。
+
+        target_run_id/target_seq 锚到被裁定的那条 run_end（结论）事件，agent 侧
+        `review.ingest_session_reviews` 据此配对结论 → apply_review → 一致率 + GT 标注。
+        corrected_* 仅 verdict=correct 时有意义；为空则省略（_emit 也会滤掉 None）。
+        Bridge 写回时用独立 run_id（viewer-review），seq 自成命名空间、不与 agent 撞。
+        """
+        fields = {
+            "verdict": review.verdict,
+            "reviewer": review.reviewer or None,
+            "target_run_id": target_run_id,
+            "target_seq": target_seq,
+            "corrected_root": review.corrected_root.value if review.corrected_root else None,
+            "corrected_failure_class": review.corrected_failure_class,
+            "corrected_entities": list(review.corrected_entities) or None,
+            "note": review.note or None,
+        }
+        return self._emit("review", **fields)
