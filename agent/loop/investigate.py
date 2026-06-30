@@ -211,7 +211,9 @@ def _classify_s2_failure(case, radius, node, sink, verbose):
     实体（canonical token，供 eval entity 召回）：
     geometric_near_tangent: triage 量出的近切边 `edge#<i>` —— 与 LLDB 真值同一处（实体级定位）。
     geometric_curvature   : 凹曲率面，triage 暂未回面 id → []（待 A7 capture 回面）。
-    algorithmic_overflow  : 重叠的两 fillet 带是 S2 中间面，免埋点无法命名 → []（待 A7 capture）。
+    algorithmic_overflow  : 重叠的两 fillet 带是 S2 中间面，免埋点无法命名 → []；其句柄埋在
+                            StripeEdgeInter 匿名 DStr（见 cases/box-r5.json truth_run），capture
+                            未必救得了 → entity 维可能止于 stage（非待兑现的 ~1.00）。
     """
     classes = node.get("failure_classes")
     if not classes:
@@ -331,7 +333,8 @@ def _diagnose_via_playbook(case, radius, run, out, sink, verbose, policy="rule",
         counterfactual = f"{cf.get('fix', '?')}（{ev}）{cf_tail}"
         conf = 0.6
 
-    # 命名到具体实体 → 定位深度记 entity；否则止于 stage（如 box overflow，待 A7 capture 命名）
+    # 命名到具体实体 → 定位深度记 entity；否则止于 stage（如 box overflow：句柄埋匿名 DStr，
+    # capture 未必救得了，可能永久止于 stage——非待兑现的 ~1.00，见 README WP4②）
     depth = "entity" if entities else "stage"
     return Conclusion(hypotheses=[CausalHypothesis(
         stage=root, chain=chain, cause=cause,

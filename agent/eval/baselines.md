@@ -33,7 +33,7 @@
 - **失效分类 1.00（三态全覆盖全中）**：免埋点诊断（triage_input 量近切角/凹曲率）精确区分 algorithmic / curvature / near-tangent 三态，与真值一致——A4 的核心可量化结论。
 - **定位分层不均是真实信号，不是噪声**：
   - `wedge`（近切）/`pocket`（曲率）定位 **1.00**——triage 量出失效现场（近切边 `edge#0` @1.718° = LLDB 真值 1.72°；凹曲率面 `face#6` @r3），免埋点即可**实体级定位**。
-  - `box`（overflow）定位 **0.70**——stage 满分但 entity 0：重叠的两 fillet 带是 S2 **中间面**，免埋点无法命名，需 **A7 capture**。这道 0↔1 差正是 capture 相对免埋点的实体定位增量。
+  - `box`（overflow）定位 **0.70**——stage 满分但 entity 0：重叠的两 fillet 带是 S2 **中间面**，免埋点无法命名。其句柄埋在 `ChFi3d_StripeEdgeInter` 的**匿名 `DStr`**（见 `cases/box-r5.json` truth_run + 记忆 fillet-overflow-crash-site），**capture 取不到具名面 → entity 维可能止于 stage 级；0.70 是诚实下限，不保证 A7 能升到 ~1.00**——与 wedge 近切「capture 可命名 HS1/HS2」相反，overflow 的实体定位增量 capture 未必兑得了，别把这格当待兑现的支票。
   - `thinplate`（false-green）定位 **0.40**——**首个症状-only 部分分**：agent 抓出 IsDone=True 但自交（不信 IsDone ✅），但只达症状 S3、未回溯 S2 根（branch-B 不跑 radius_probe）。改进项：false-green 检出后也 radius_probe 回溯 S2 根。
 - **弃权是一等结果，与定位分账**：clean 正确弃权（`box-clean`）、过度弃权（`wedge-thin-abstain`，可行半径 <探针下限 0.002 → 漏掉本可定位的 S2）——两者定位都记 **n/a**（不混入定位均值），对错全归 **abstention precision = 0.50**。这把"会不会幻觉/会不会过度弃权"和"定位准不准"两件事分开量——一个过度自信 LLM 会在 clean 上 false_commit、一个保守 LLM 会到处 wrong_abstain，都被抓。
 - **机制\* / 反事实\***：机制仅 `localization_depth` 深度代理；反事实仅判"是否携带"（false-green 的 branch-B 未携带靶向修法 → 0.00，是诚实的待补点）。真分待 truth-run 中间态 / OCCT 执行（A8）。
