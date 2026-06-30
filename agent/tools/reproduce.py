@@ -55,6 +55,7 @@ def reproduce(
     case_id: str,
     *,
     radius: float | None = None,
+    tolerance: float | None = None,
     backend: str = "real",
     out_dir: str | None = None,
     record_dir: str | None = None,
@@ -64,6 +65,7 @@ def reproduce(
 
     out_dir：产出（RunEnd json + bad_shape brep）落地目录；None → mkdtemp（持久，caller 负责清）。
     record_dir：real 跑完把 RunEnd + brep 录进去，供 replay 离线重放。
+    tolerance：A7 WP3 互斥反事实——fillet 前对几何 fixTolerance(值)，只动容差不动半径（None=不动）。
     """
     r = 1.0 if radius is None else float(radius)
 
@@ -91,6 +93,10 @@ def reproduce(
         "REPRO_OUT_BREP": str(out_brep),
         "REPRO_OUT_JSON": str(out_json),
     })
+    if tolerance is not None:
+        env["REPRO_TOLERANCE"] = str(tolerance)
+    else:
+        env.pop("REPRO_TOLERANCE", None)            # 防继承外层 env 的残留值
     try:
         proc = subprocess.run(
             [str(bin_path), str(_HARNESS)], env=env,

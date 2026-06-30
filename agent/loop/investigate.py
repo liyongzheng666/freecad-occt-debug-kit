@@ -40,18 +40,19 @@ def _log(verbose, msg):
         print("  · " + msg)
 
 
-def _observe(case, r, out_dir, sink, verbose):
-    """reproduce + 记一条 ToolResult。"""
-    run = reproduce(case, radius=r, out_dir=out_dir)
+def _observe(case, r, out_dir, sink, verbose, tolerance=None):
+    """reproduce + 记一条 ToolResult。tolerance：WP3 互斥反事实，只动容差不动半径（None=不动）。"""
+    run = reproduce(case, radius=r, tolerance=tolerance, out_dir=out_dir)
+    tag = f"r={r}" + (f" tol={tolerance}" if tolerance is not None else "")
     sink.append(ToolResult(
         tool="reproduce", ok=(run.status == "ok"),
-        summary=f"r={r}: status={run.status} is_done={run.is_done}"
+        summary=f"{tag}: status={run.status} is_done={run.is_done}"
                 + (f" exc={run.exception}" if run.exception else ""),
-        payload={"radius": r, "status": run.status, "phase": run.phase},
+        payload={"radius": r, "tolerance": tolerance, "status": run.status, "phase": run.phase},
         artifact_id=run.bad_shape, source="agent/tools/reproduce.py",
         error=run.exception if run.status != "ok" else None,
     ))
-    _log(verbose, f"reproduce r={r} → status={run.status} is_done={run.is_done}"
+    _log(verbose, f"reproduce {tag} → status={run.status} is_done={run.is_done}"
                   + (f" [{run.exception}]" if run.exception else ""))
     return run
 
@@ -69,9 +70,9 @@ def _validate(brep, sink, verbose):
     return v
 
 
-def _is_feasible(case, r, out_dir, sink, verbose):
-    """可行 = reproduce 跑完产形状 且 check_valid 判有效（S6，非 IsDone）。"""
-    run = _observe(case, r, out_dir, sink, verbose)
+def _is_feasible(case, r, out_dir, sink, verbose, tolerance=None):
+    """可行 = reproduce 跑完产形状 且 check_valid 判有效（S6，非 IsDone）。tolerance 见 _observe。"""
+    run = _observe(case, r, out_dir, sink, verbose, tolerance=tolerance)
     if run.status != "ok" or not run.is_done or not run.bad_shape:
         return False
     return _validate(run.bad_shape, sink, verbose).valid
@@ -86,6 +87,34 @@ def _probe_feasible_bound(case, requested, out_dir, sink, verbose):
             return r, prev_infeasible
         prev_infeasible = r
     return None, prev_infeasible
+
+
+# WP3 互斥反事实：只动容差不动半径的升序阶梯（恢复有效实体即"容差敏感"→ S3 数值病态）
+_CF_TOLERANCES = [0.001, 0.01, 0.1]
+
+
+def _probe_tolerance_fix(case, requested, out_dir, sink, verbose):
+    """同半径只扰容差（升序阶梯）→ 首个能恢复有效实体(S6)的容差 or None（None=容差修法无效）。"""
+    for tol in _CF_TOLERANCES:
+        if _is_feasible(case, requested, out_dir, sink, verbose, tolerance=tol):
+            return tol
+    return None
+
+
+def _counterfactual_verdict(lower_radius_ok: bool, tol_fix):
+    """互斥靶向修法组合 → S2/S3 判别（root-cause-verification.md §4 腿3，纯函数）。
+
+    tol_fix：生效容差 or None。只动这两个互斥修法（降半径 / 扰容差，均不动对方）的成功组合
+    把根因对齐到 S2(几何/半径相关) / S3(容差敏感数值病态) / "S2 诱发 S3"。
+    """
+    tol_ok = tol_fix is not None
+    if lower_radius_ok and not tol_ok:
+        return "S2", "降半径有效、扰容差(≤0.1)无效 → 失败半径/几何相关(S2)，排除 S3 容差敏感(数值病态)"
+    if tol_ok and not lower_radius_ok:
+        return "S3", f"仅扰容差(={tol_fix})有效、降半径无效 → S3 数值病态(容差敏感、半径无关)"
+    if tol_ok and lower_radius_ok:
+        return "S2->S3", f"降半径 + 扰容差(={tol_fix})均有效 → S2 诱发 S3(半径偏大致近切 + 数值病态)"
+    return "inconclusive", "降半径与扰容差均无效 → 互斥反事实未区分 S2/S3"
 
 
 # ---- 决策表驱动定位（playbook：症状 → 候选 → 判别器）--------------------------
@@ -275,11 +304,20 @@ def _diagnose_via_playbook(case, radius, run, out, sink, verbose, policy="rule",
         failure_class = key
         cause = f"{cand['cause']}。失效类别【{key}】：{info['cause']}（{why}）"
         salv = info.get("salvageable")
+        # WP3 第三腿：互斥反事实。radius_probe 已 fired → 降半径有效；再跑 perturb_tolerance
+        # （不动半径），两修法成功组合判别 S2 / S3 / S2→S3（root-cause §4 腿3）。
+        tol_fix = _probe_tolerance_fix(case, radius, out, sink, verbose)
+        cf_label, cf_why = _counterfactual_verdict(True, tol_fix)
+        _log(verbose, f"  互斥反事实 [{cf_label}]：{cf_why}")
         counterfactual = (f"修法：{info['fix']}"
-                          + ("（几何可救，非降半径）" if salv else "（降半径之外无解）"))
+                          + ("（几何可救，非降半径）" if salv else "（降半径之外无解）")
+                          + f"｜互斥反事实[{cf_label}]：{cf_why}")
         evidence.append(Evidence(
             f"失效分类 {key}（salvageable={salv}）：{why} → 修法 {info['fix']}",
             source="agent/playbook/fillet-failures.json"))
+        evidence.append(Evidence(
+            f"互斥反事实 [{cf_label}]：{cf_why}",
+            source="agent/loop/investigate.py"))
         if entities:
             evidence.append(Evidence(
                 f"实体级定位：失效现场 {', '.join(entities)}（triage 近切边/凹曲率面，免埋点可命名）",

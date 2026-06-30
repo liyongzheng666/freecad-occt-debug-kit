@@ -10,15 +10,17 @@
 > 分层＝按 GT `failure_class`；clean 自成 `clean/abstain` 层、false-green 归 `其它(无三态类)`。
 > 决策走 `decide(state)` 接缝（policy=rule；A5 换 decide_llm 同表对比）。
 > **定位准确率只在"承诺定位"的 case 上算；弃权 case 定位记 n/a，对错归 abstention（分账不混）。**
+>
+> **2026-06-29 更新（A7 WP1+WP3）**：下表 tool-call/wall 已含 A7 改动——**WP1** S3 候选经 capture 桥真跑 ssi_probe（near-tangent case +1 tool、wedge wall 升到 ~7s 因 LLDB capture）；**WP3** S2 分类后真跑互斥反事实 perturb_tolerance（升序容差阶梯，+≤3 reproduce/case）。**质量维（定位/失效分类/机制*/校准/弃权）逐位不变**——A7 是把第三腿（机制 capture + 反事实互斥）做实，不动定位正确性。
 
 | 层 | n | 定位 | 失效分类 | 机制* | 反事实* | 校准 | 平均 tool-call | 平均 wall_s |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | clean/abstain | 1 | n/a | n/a | n/a | n/a | n/a | 2.0 | ~0.3 |
-| algorithmic_overflow | 1 | 0.70 | 1.00 | 0.20 | 携带 | 0.70 | 5.0 | ~1.0 |
-| geometric_curvature | 1 | 1.00 | 1.00 | 0.50 | 携带 | 0.70 | 5.0 | ~1.1 |
-| geometric_near_tangent | 2 | 1.00¹ | 1.00 | 0.50 | 携带 | 0.70 | 7.5 | ~2.0 |
+| algorithmic_overflow | 1 | 0.70 | 1.00 | 0.20 | 携带 | 0.70 | 8.0 | ~1.7 |
+| geometric_curvature | 1 | 1.00 | 1.00 | 0.50 | 携带 | 0.70 | 8.0 | ~1.8 |
+| geometric_near_tangent | 2 | 1.00¹ | 1.00 | 0.50 | 携带 | 0.70 | 9.5 | ~5.0 |
 | 其它(无三态类)·false-green | 1 | 0.40 | n/a | 0.50 | 0.00 | 0.75 | 2.0 | ~0.4 |
-| **全集** | **6** | **0.78** | **1.00** | **0.42** | — | **0.71** | **4.8** | ~1.1 |
+| **全集** | **6** | **0.78** | **1.00** | **0.42** | — | **0.71** | **6.5** | ~2.4 |
 
 ¹ near-tangent 层 n=2 但定位均值只算 1 个**承诺**case（`wedge-sliver` 1.00）；另一 `wedge-thin-abstain` 弃权 → 定位 n/a（不入均值），其对错见弃权汇总。
 
@@ -35,6 +37,8 @@
   - `thinplate`（false-green）定位 **0.40**——**首个症状-only 部分分**：agent 抓出 IsDone=True 但自交（不信 IsDone ✅），但只达症状 S3、未回溯 S2 根（branch-B 不跑 radius_probe）。改进项：false-green 检出后也 radius_probe 回溯 S2 根。
 - **弃权是一等结果，与定位分账**：clean 正确弃权（`box-clean`）、过度弃权（`wedge-thin-abstain`，可行半径 <探针下限 0.002 → 漏掉本可定位的 S2）——两者定位都记 **n/a**（不混入定位均值），对错全归 **abstention precision = 0.50**。这把"会不会幻觉/会不会过度弃权"和"定位准不准"两件事分开量——一个过度自信 LLM 会在 clean 上 false_commit、一个保守 LLM 会到处 wrong_abstain，都被抓。
 - **机制\* / 反事实\***：机制仅 `localization_depth` 深度代理；反事实仅判"是否携带"（false-green 的 branch-B 未携带靶向修法 → 0.00，是诚实的待补点）。真分待 truth-run 中间态 / OCCT 执行（A8）。
+- **A7 WP1（机制腿 capture）做实但未改分**：S3 候选不再永久 untestable——near-tangent 经 capture 桥抓真支撑面跑 ssi_probe 得 `ruled_out`（wedge：1.7184° + section 1 条 contact 边 → 属 S2 非 S3）。这条机制证据进了结论的 evidence，但 scorer 的"机制\*"维仍是 `localization_depth` 代理、不直接打分 capture 结果——故分值不变、tool-call/wall 上升（增量是"证据质量"非"分数"，诚实标注）。
+- **A7 WP3（反事实腿互斥判别）做实但未改分**：反事实从"声明修法字符串"升级为**真跑两个互斥修法出判别**——降半径（radius_probe 已 fired）+ 扰容差（perturb_tolerance，不动半径）。三态 S2 case 实测 **扰容差(≤0.1)无效 → 判 [S2]，排除 S3 容差敏感**（wedge/pocket/box 均如此，与真值一致——它们确非 S3 数值病态）。但 scorer 的"反事实\*"维仍只判"是否携带靶向修法"，**不打分互斥判别正确性**——真分待 scorer 加"反事实判别 vs GT"维（A8）。当前 WP3 的可见产出在结论 `counterfactual` 文案（`互斥反事实[S2/S3/S2->S3]：…`），非 eval 分。
 - **校准 0.70~0.75**：置信与 stage 定位正确性之差。
 
 > GT 基线说明：`box-r5`/`wedge-sliver` 是 LLDB 埋点真值；`pocket-blind-hole` 是**几何第一性真值**（r>凹曲率半径 ⟹ 滚球无解，几何必然，不依赖算法实现）+ radius_probe 边界证据（可行/不可行界恰落在曲率半径 3 上）+ triage 独立佐证 face#6 r3——honest 区分两类 GT 来源。
@@ -52,11 +56,13 @@
 | 层 | n | 定位 | 失效分类 | 机制* | 反事实* | 校准 | 平均 tool-call | 平均 wall_s |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | clean/abstain | 1 | n/a | n/a | n/a | n/a | n/a | 2.0 | (branch B，不进 decide) |
-| algorithmic_overflow | 1 | 0.70 | 1.00 | 0.20 | 携带 | 0.70 | 5.0 | ~39 |
-| geometric_curvature | 1 | 1.00 | 1.00 | 0.50 | 携带 | 0.70 | 5.0 | ~34 |
-| geometric_near_tangent | 2 | 1.00 | 1.00 | 0.50 | 携带 | 0.70 | 7.5 | ~41 |
+| algorithmic_overflow | 1 | 0.70 | 1.00 | 0.20 | 携带 | 0.70 | 8.0 | ~1.8（replay） |
+| geometric_curvature | 1 | 1.00 | 1.00 | 0.50 | 携带 | 0.70 | 8.0 | ~1.8（replay） |
+| geometric_near_tangent | 2 | 1.00 | 1.00 | 0.50 | 携带 | 0.70 | 9.0 | ~2.3（replay） |
 | 其它(无三态类)·false-green | 1 | 0.40 | n/a | 0.50 | 0.00 | 0.75 | 2.0 | (branch B，不进 decide) |
-| **全集** | **6** | **0.78** | **1.00** | **0.42** | — | **0.71** | **4.8** | ~26（决策延迟，replay 后 ~1.1） |
+| **全集** | **6** | **0.78** | **1.00** | **0.42** | — | **0.71** | **6.3** | ~1.5（replay；real 含决策延迟 ~26） |
+
+> 上表 tool-call/wall 为 2026-06-29 replay 重跑（含 A7 WP1+WP3）。WP1/WP3 的 capture/perturb_tolerance 是**决策之后的确定性合成**（不在 decide 接缝），录制决策不变 → replay 照常复现。
 
 弃权/校准：correct_abstain=1 / wrong_abstain=1 / correct_commit=4 / false_commit=0；abstention precision=0.50。
 
@@ -68,8 +74,10 @@
 | 失效分类 | 1.00 | 1.00 | 0 |
 | abstention precision | 0.50 | 0.50 | 0 |
 | false_commit | 0 | 0 | 0 |
-| 平均 tool-call | 4.83 | 4.83 | **0** |
-| 平均 wall_s | 1.1 | ~26（real）/ 1.1（replay） | LLM 决策延迟 23× |
+| 平均 tool-call | 6.50 | 6.33 | **≈0**（±0.17＝near-tangent S3 capture 路径的条件 ToolResult，决策后合成，非决策层差） |
+| 平均 wall_s | 2.4 | ~26（real）/ 1.5（replay） | LLM 决策延迟 ~17× |
+
+> tool-call 数 2026-06-29 含 A7 WP1+WP3（4.83→~6.4）；两臂仍≈持平——A7 的增量是确定性合成（capture 机制证据 + perturb_tolerance 互斥反事实），不在决策臂，故 rule/LLM 同样上升、A/B 结论不变。
 
 **LLM 各质量维 + tool-call 与规则版逐位持平,只慢在决策延迟。** 诚实解读:
 

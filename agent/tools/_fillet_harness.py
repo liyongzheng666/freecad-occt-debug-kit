@@ -6,6 +6,7 @@
   REPRO_CASE      case 几何构建器 id（如 "box" / "box-flat"）
   REPRO_RADIUS    fillet 半径
   REPRO_EDGES     可选，逗号分隔的边序号（1-based，对 shape.Edges）；空=全部边
+  REPRO_TOLERANCE 可选，fillet 前对几何 fixTolerance(值)——A7 WP3 互斥反事实：只动容差不动半径
   REPRO_OUT_BREP  结果 BREP 导出路径（成功产出形状时写）
   REPRO_OUT_JSON  RunEnd JSON 输出路径（始终写）
 
@@ -72,6 +73,9 @@ def main():
                 result["bad_shape"] = out_brep
             result["status"] = "ok"
         else:
+            tol = os.environ.get("REPRO_TOLERANCE")
+            if tol:                                   # WP3 互斥反事实：只动容差、不动半径
+                shape.fixTolerance(float(tol))
             edges = select_edges(shape, os.environ.get("REPRO_EDGES", ""))
             try:
                 filleted = shape.makeFillet(radius, edges)
