@@ -1,6 +1,6 @@
 # 圆角缺陷调研 Agent —— 推进路线图与欠缺项清单
 
-> 状态：**Agent v0 + 根因 Eval + rule/LLM A/B + 轨迹/标注闭环（含 viewer review 写回）已投产**（A0–A7 工具层 ✅，A6 全闭环 ✅；下一站 G26 真实模型输入 / 扩 case / A7 深探针）<br>
+> 状态：**Agent v0 + 根因 Eval + rule/LLM A/B + 轨迹/标注闭环（含 viewer review 写回）+ G26 真实模型输入(v1) 已投产**（A0–A7 工具层 ✅，A6 全闭环 ✅，G26 BREP/STEP+指定边 ✅；下一站 扩 case / A8 深探针 / FCStd 直读）<br>
 > **最终目标：根因寻找（root-cause finding）**——不是"把圆角修好"，而是定位"圆角失败是流水线哪一阶段先崩、为什么崩"，并给出可验证的因果结论供人 review。<br>
 > 面试对标：DeepSeek **Harness 工程师**（agent 脚手架 + eval 基础设施）。<br>
 > 关联真源：[playbook/blend-failure-ontology.md](playbook/blend-failure-ontology.md)（失效本体）、[docs/root-cause-verification.md](docs/root-cause-verification.md)（根因验证方法学）、[../docs/occ-fillet-debug-agent-architecture.md](../docs/occ-fillet-debug-agent-architecture.md)（架构）、[../docs/occ-mesh-daemon-plan.md](../docs/occ-mesh-daemon-plan.md)。
@@ -9,21 +9,21 @@
 
 ## 进度快照（最近更新）
 
-**已投产（真跑 + 自测，10 个 test 模块全绿：scorer / session / check_valid / reproduce / ssi_probe / playbook / triage_input / capture / decide_llm / trajectory / review）**：
+**已投产（真跑 + 自测，14 个 test 模块全绿：scorer / session / check_valid / reproduce / ssi_probe / playbook / triage_input / capture / decide_llm / trajectory / review / investigate_ssi / investigate_cf / g26_realmodel）**：
 
 - **工具层**：`reproduce`(FreeCADCmd, real+replay) · `check_valid`(occ-debug-mesh BRepCheck) · `ssi_probe`(面面求交→S3签名) · `capture`(LLDB 活几何→BREP) · `triage_input`(近切+凹曲率判别) · `playbook`(决策表)。
 - **回路 ★里程碑1**：`loop/investigate.py` 决策表驱动 v0——observe(`reproduce`) → **`decide(state)` 接缝**逐候选判别(check_valid_input / radius_probe / ssi_probe) → **失效三态分类** → 对症反事实 → `emit_conclusion`。决策走 policy 接缝（`decide_rule` / `decide_llm` 同签名 A/B），模型只在此点、其余确定性。
 - **A5 rule/LLM A/B ★里程碑3**：`decide_llm` 三后端可插拔（`claude_cli` 走本地 `claude -p` 复用 Claude Code 鉴权、无 key / `replay` 离线复现 / `api` 留接缝）；**确定性=record/replay**（非 temp0——opus-4-8 无 sampling 参数）。实测 **LLM 各质量维 + tool-call 与规则版逐位持平**（定位 0.78/失效分类 1.00/abstention 0.50/tool 4.83），只慢在决策延迟——印证"模型只在决策点、其余确定性"，剩余差距诚实归因到工具层（探针分辨率）非决策层。详见 `eval/baselines.md`。
 - **发射缝**：`session.py`（emit→`events.ndjson`，过 `event.schema.json` 校验）。
 - **A6 轨迹/标注闭环（全闭环 ✅）**：`trajectory.py` 收 run 有序轨迹（observe/decide/verdict/conclude）→ ndjson → **离线重放重打分与 live 同分**；`review.py` 把人工裁定(confirm/correct/reject)接成 **GT 标注 + 人-agent 一致率**——review(O(1)) 与 eval(O(N)) 同底座。**viewer 写回已接**：`ReviewPanel.tsx` → `reviewClient.postReview` → Bridge `/review`（viewer-review 命名空间 + 字段白名单）追加 `op=review` → agent `ingest_session_reviews` 配对结论离线算一致率（红线：Bridge 不算分）。
-- **eval ★里程碑2**：`eval/eval.sh`→`runner.py` 一条命令真跑全集 → `scorer` 五维打分（定位 / **失效分类** / 机制\* / 反事实\* / 校准）+ **弃权四态裁定（abstention precision / false_commit，与定位分账）** + tool-call 成本 + wall-clock，**分层报**；规则版基线登记 `baselines.md`（6 case：三态各 1 全中 + clean 弃权 + false-green + 过度弃权；定位全集 0.78、失效分类 1.00、abstention precision 0.50、false_commit=0）。机制\*/反事实\* 为代理/携带，真分待 truth-run/OCCT（A8）。
-- **真值 GT（6 case，含 3 区分度 case）**：三态 `cases/box-r5.json`（LLDB overflow）·`cases/wedge-sliver.json`（LLDB 近切 1.72°）·`cases/pocket-blind-hole.json`（几何第一性曲率）；区分度 `cases/box-clean.json`（clean 弃权 → 测不幻觉）·`cases/thinplate-false-green.json`（**false-green/代理奖励陷阱**：IsDone=true 但自交，触发症状-only 部分分）·`cases/wedge-thin-abstain.json`（**loop 内过度弃权**：可行半径低于探针下限 → wrong_abstain）。
+- **eval ★里程碑2**：`eval/eval.sh`→`runner.py` 一条命令真跑全集 → `scorer` 五维打分（定位 / **失效分类** / 机制\* / 反事实\* / 校准）+ **弃权四态裁定（abstention precision / false_commit，与定位分账）** + tool-call 成本 + wall-clock，**分层报**；规则版基线登记 `baselines.md`（7 case：三态各 1 全中 + clean 弃权 + false-green + 过度弃权 + s3-fixture 合成正例；定位全集 0.82、失效分类 1.00、abstention precision 0.50、false_commit=0）。机制\*/反事实\* 为代理/携带，真分待 truth-run/OCCT（A8）。
+- **真值 GT（7 case，含 3 区分度 case + 1 合成 fixture）**：三态 `cases/box-r5.json`（LLDB overflow，S3 现经 WP5 源码插桩真实抓到）·`cases/wedge-sliver.json`（LLDB 近切 1.72°）·`cases/pocket-blind-hole.json`（几何第一性曲率）；区分度 `cases/box-clean.json`（clean 弃权 → 测不幻觉）·`cases/thinplate-false-green.json`（**false-green/代理奖励陷阱**：IsDone=true 但自交，触发症状-only 部分分）·`cases/wedge-thin-abstain.json`（**loop 内过度弃权**：可行半径低于探针下限 → wrong_abstain）；`cases/s3-fixture.json`（**合成**近切接触退化 S3，覆盖 `_ssi_verdict fired` 分支，见 WP2/WP3 诚实标注）。
 - **失效三态（采纳 review：overflow 可裁剪非降半径）**：`algorithmic_overflow`(可 SSI 互裁) / `geometric_near_tangent` / `geometric_curvature`——investigate 用 triage 判别 → 对症修法 + **实体级定位**（近切边 `edge#0` / 凹曲率面 `face#6`），与真值一致；overflow 中间面句柄埋匿名 `DStr`、capture 未必救得了，entity 维可能止于 stage（非待兑现的 ~1.00，见 §A4 残留 / WP4②）。
 - **可视 demo**：`demo/convex_concave/`（凸/凹/可裁剪/几何不可能 四态对照 + `DISPLAY_RULES.md` 显示约束）。
 
 **铁律落地**：全程禁用裸 `IsDone()`，成功判据 = `check_valid` 几何有效性。
 
-**下一站（候选，新窗口接手）**：① **G26 真实模型输入 adapter**（喂用户真模型 + 指定边 → 出诊断，见 §8）；② **A6 viewer review 接线**（离线核已完成，剩 Print viewer 按钮 → 写回 session 的 UI 活）；③ **扩"决策空间大"的 case**（多候选/需早停/需领域推理选探针，让 A5 的 LLM 臂显价值——当前 3 候选决策表 rule 已近最优）；④ **A7 playbook 补 S3 节点**。
+**下一站（候选，新窗口接手）**：① **G26 v1 已投产 ✅**（BREP/STEP + 指定边 → 诊断，见 §8）——剩 **FCStd 直读**（openDocument + Part::Feature）+ 多边 triage 消歧；② **A6 viewer review 接线**（离线核已完成，剩 Print viewer 按钮 → 写回 session 的 UI 活）；③ **扩"决策空间大"的 case**（多候选/需早停/需领域推理选探针，让 A5 的 LLM 臂显价值——当前 3 候选决策表 rule 已近最优）；④ **A7 playbook 补 S3 节点**。
 
 ---
 
@@ -90,7 +90,7 @@
 | G14 | **SurfData/corner 深探针（S2/S4）** | 依赖 G13 | 🟡 | A8 |
 | G15 | **沙箱 / 资源上限 / per-case 隔离 / 并发** | daemon 有单点 timeout，未泛化 | 🟡 | A8 |
 | G16 | **泛化 adapter**（chamfer / boolean / offset；本体已内核无关） | 仅 fillet | 🟡 | A8 |
-| G26 | **真实模型输入 adapter**（载入用户 FCStd/STEP/BREP + 指定边 + 单边 triage）——从合成 case 跨到真实失败诊断 | ⏳ 现 harness 仅认硬编 builder（box/wedge/pocket）、`reproduce` 不穿单边、`triage_input` 是全 shape 统计；真模型需补 file-load builder + `edges` 穿透 reproduce + 单边支撑面 triage（详见 §8） | 🟠 | A6 |
+| G26 | **真实模型输入 adapter**（载入用户 FCStd/STEP/BREP + 指定边 + 单边 triage）——从合成 case 跨到真实失败诊断 | 🟡 **v1 已投产**（2026-07-01）：`build_shape` 认 `brep:/step:/file:` 前缀载真几何（BREP+STEP，走 `Part.Shape().read()`）；`edges` 穿透 reproduce(`REPRO_EDGES`) 全诊断链；`triage_input(edge_index=)` 单边聚焦（`TRIAGE_EDGE_INDEX`）；CLI `investigate "brep:/abs.brep" <r> --edges N`。自测 `tools/test_g26_realmodel.py`（自足 round-trip，缺 FreeCADCmd SKIP）。⏳ 待补：FCStd 直读（需 openDocument + Part::Feature 遍历）、多边 triage 消歧 | 🟠 | A6 |
 
 ---
 
@@ -171,7 +171,7 @@ agent/
 补齐：G6、G21、G22、G7（一半）。
 
 - [x] `cases/schema.md`：输入 + **四元组 GT**（真崩阶段、涉及实体、期望中间态、靶向修法）+ `true_chain` + `failure_class`。
-- [~] **分层** case：6 个真值 case——**失效三态各 1**（`box-r5` algorithmic_overflow / `wedge-sliver` geometric_near_tangent，LLDB；`pocket-blind-hole` geometric_curvature，几何第一性）+ **3 区分度 case**（`box-clean` clean 弃权 / `thinplate-false-green` 代理奖励陷阱 + 症状-only 部分分 / `wedge-thin-abstain` loop 内过度弃权）；eval 按 failure_class + clean + 其它分层，弃权四态与定位分账。⏳ 待扩：S0→S3 链（待 A7 capture）、凹/凸 × 链/顶点 × 变半径完整分层。
+- [~] **分层** case：7 个真值 case——**失效三态各 1**（`box-r5` algorithmic_overflow / `wedge-sliver` geometric_near_tangent，LLDB；`pocket-blind-hole` geometric_curvature，几何第一性）+ **3 区分度 case**（`box-clean` clean 弃权 / `thinplate-false-green` 代理奖励陷阱 + 症状-only 部分分 / `wedge-thin-abstain` loop 内过度弃权）+ **1 合成 fixture**（`s3-fixture` 接触退化型 S3，覆盖 `_ssi_verdict fired` 分支，见 A7 WP3）；eval 按 failure_class + clean + 其它分层，弃权四态与定位分账。⏳ 待扩：凹/凸 × 链/顶点 × 变半径完整分层（S0→S3 链仍缺真实正例；overlap 型 S3 已由 box-r5 经 WP5 源码插桩真实覆盖）。
 - [x] `tools/reproduce.py`：跑 FreeCADCmd recompute → 结构化 `RunEnd{status, exception, phase, …, bad_shape, is_done}`（§24）。✅ 真跑 FreeCADCmd（env 驱动 `_fillet_harness.py`，box/box-flat case + 任意半径/边）；**status=跑完产形状 ≠ 有效**（有效性归 check_valid），自测 `test_reproduce.py`。
 - [x] **record/replay 双后端**：real 跑真 FreeCADCmd；replay 读已录制 `RunEnd`（brep 一并录入 → 自洽）→ eval 不必每次拉重型栈。
 - [x] **instrumented truth run**：LLDB `br set -E c++` 跑出真崩点——box-r5→`ChFi3d_StripeEdgeInter`(overflow)、wedge→`StartSol echec`(近切)，作为 GT 标签来源（见两 case 的 `truth_run` 段 + 记忆 `fillet-*-crash-site`）。
@@ -259,17 +259,18 @@ agent/
 
 **已落地的两块工具底座**：
 
-- [x] **capture 桥（S2 现场已 pin & 真跑验证）**：`tools/capture.py` 驱动 `lldb -b` + `scripts/occ_capture.py`，断点处 `BRepTools::Write` 真写出活几何 BREP（断点绑定 OK，OSO 调试映射在）；顺带**修了 occ_capture 的 OCCT 7.8 `BRepTools::Write` 三参签名 bug**。**S2-StartSol 近切现场已 pin**：`ChFi3d_Builder_2.cxx:944`，`HS1->Face()`/`HS2->Face()` 具名可抓，`capture_ssi` 真跑通过（2026-06-27，见 `cases/wedge-sliver.json` 的 `truth_run`）——产物 `min_dihedral=1.72° / near_tangent=true / s3_signature=**false**`，即"近切 → 排除 S3、坐实 S2"。⚠️ 这是 S2 现场；**真正产生 `s3_signature=true` 的 S3 现场（blend 面 × 邻面接触退化）尚未在真 fillet 上获到**（见下 WP2）。
+- [x] **capture 桥（S2 现场已 pin & 真跑验证）**：`tools/capture.py` 驱动 `lldb -b` + `scripts/occ_capture.py`，断点处 `BRepTools::Write` 真写出活几何 BREP（断点绑定 OK，OSO 调试映射在）；顺带**修了 occ_capture 的 OCCT 7.8 `BRepTools::Write` 三参签名 bug**。**S2-StartSol 近切现场已 pin**：`ChFi3d_Builder_2.cxx:944`，`HS1->Face()`/`HS2->Face()` 具名可抓，`capture_ssi` 真跑通过（2026-06-27，见 `cases/wedge-sliver.json` 的 `truth_run`）——产物 `min_dihedral=1.72° / near_tangent=true / s3_signature=**false**`，即"近切 → 排除 S3、坐实 S2"。⚠️ 这是 S2 现场；**WP2 悬赏的"StartSol 成功后接触曲线退化"型 S3 仍未在真 fillet 上获到**（见下 WP2）——但另一子型（overlap 型 S3，`StripeEdgeInter` 两 blend 带 2D pcurve 重叠）已在 box-r5 **真实几何**上经源码插桩获到 `s3_signature=true`，见下 WP5。
 - [x] `tools/ssi_probe.py`：**靶向子复现**——脱离 ChFi3d 单独跑面面求交（`intersectSS` + `section` + 近切角），**S3 机制证据落地**：近切 + 期望接触却 0 → S3 签名。✅ 4 夹具判别自测（横切/割→否、切→否、近切离开→是），`test_ssi_probe.py`。
 
-**剩余工作（4 个工作包，WP1/WP3 纯 agent 侧无新几何、可先做；WP2 是长杆可并行；WP4 收口）**：
+**剩余工作（5 个工作包，WP1/WP3 纯 agent 侧无新几何、可先做；WP2 是长杆可并行；WP4 收口；WP5 是 WP2 负结果后的源码插桩突破）**：
 
-- [x] **WP1 — capture_ssi 接进 investigate loop（解除 S3 永久弃权）✅**：`ssi_probe` 判别器不再硬编 `untestable`，经 capture 桥真跑面面求交。落地三件：① `tools/capture.py` 加 `CAPTURE_SPECS` 现场注册表（按 agent case 串键控，wedge→StartSol `ChFi3d_Builder_2.cxx:944` + `HS1/HS2->Face()`；box overflow 匿名 DStr 不登记）+ `capture_spec_for`/`prereqs_ok`；② `make_fail_script` 从 case+radius 生成 fail_script，**复用 `_fillet_harness.build_shape` 单一几何真源**（顺带把 harness 的 `main()` 自调用 guard 成 `if REPRO_OUT_JSON`，使其可 import 而不自跑）；③ `loop/investigate.py` 加纯函数 `_ssi_verdict`（`SSIReport`→fired/ruled_out/untestable，`n_curves_ss=-1` 哨兵→untestable 不误判 S3 排除）+ `_ssi_discriminate`（无现场/缺 LLDB 前置→照实 untestable，**不伪绿**）。**端到端实测**：`investigate wedge 1.0` 的 S3 候选从"永久 untestable"→`ruled_out`（capture StartSol HS1/HS2 真支撑面跑 ssi_probe，得近切 **1.7184°** + section 1 条 contact 边 → 失败属 S2 非 S3），结论仍 geometric_near_tangent/S2 不变。自测：`loop/test_investigate_ssi.py`（_ssi_verdict 纯映射 + 无前置弃权）+ `tools/test_capture.py`（wedge capture_ssi 真跑，缺前置 SKIP）。**CI 无 LLDB 时 S3 仍 untestable → eval 数字不变**；有 LLDB 时 tool-call +1（capture_ssi）。
-- [~] **WP2 — 找一个真 S3 失效现场（长杆，2026-06-30 timebox 两轮 7 几何族 → 诚实负结果 + taxonomy）**：目标是 fillet **StartSol 成功**但其后接触曲线求交退化（期望 1 条 contact 实得 0）→ 真 `s3_signature=true`、两面具名可抓。**两轮真机 LLDB truth-run 未获**：① 凸/近切族（cone/cyl 凸台/wedge/flatcone）失败一律先死在 **S2 `StartSol`**（`Builder_2:944`，滚球座不进，到不了 S3）；② overlap 族——单边 box-r5 = **S3 `StripeEdgeInter`**(`Builder_0:2766` "too big radiuses")、双边 box = **S4 `PerformOneCorner`**(`Builder_C1:999` 同 "too big radiuses")，**两者几何都埋匿名 `DStr`、面不具名 → 不可抓**；③ 凹/鞍状族（cross-cyl 鞍缝 fillet 成功 / torus 缝边 = **S4 `PerformOneCorner`** `Builder_C1:873` "bouchon non ecrit" 未实现分支、DStr 埋）。**taxonomy 洞察（硬交付）：OCCT "too big radiuses" overlap 失败无论边(S3)还是角(S4)都把几何埋进匿名 `DStr` —— box-r5 的"DStr 取不到具名面"是 overlap 失败族的通性，非孤例（直接增强 WP4②）；唯一可抓的深现场是 S2 `StartSol`(HS1/HS2，wedge 已用）。** 真 S3 窄窗口（StartSol 返回后、PerformSurf 内 spring/contact 求交失败且 HS1/HS2 仍在 scope）理论存在但 7 族未踩中、低概率，留作后续长杆。全程证据见 scratchpad `WP2_findings.md`（未改任何已提交文件）。
-- [x] **WP3 — S3/S2 互斥反事实可执行（perturb_tolerance vs lower_radius）✅**：反事实从"声明修法字符串"升级为**真跑两个互斥修法出判别**（root-cause-verification.md §4 腿3）。落地三件：① `reproduce.py` 加 `tolerance` 入参 + `_fillet_harness.py` 加 `REPRO_TOLERANCE`（fillet 前 `shape.fixTolerance`，只动容差不动半径；**经验证 fixTolerance 确实改 globalTol 但 wedge 仍失败 → 近切是几何 S2、容差不敏感**）；② `loop/investigate.py` 加纯函数 `_counterfactual_verdict`（降半径✓/容差✓ 四组合→S2 / S3 / S2→S3 / inconclusive）+ `_probe_tolerance_fix`（升序容差阶梯 [0.001,0.01,0.1]→首个恢复有效实体(S6)的容差 or None）+ `_observe`/`_is_feasible` 加 `tolerance` 透传（向后兼容）；③ S2 分类后跑 perturb_tolerance（radius_probe 已 fired→降半径有效），两修法组合判别折进结论 `counterfactual` + evidence。**实测**：三态 S2 case（wedge/pocket/box）扰容差(≤0.1)均无效 → 判 **[S2]，排除 S3 容差敏感(数值病态)**，与真值一致。自测 `loop/test_investigate_cf.py`（纯组合判别 + wedge 集成）。**质量维不变、tool-call 升（S2 case +≤3 reproduce）**——WP3 做实第三腿不动定位正确性；scorer 的"反事实\*"维仍是代理（只判携带，不打分互斥判别正确性），真分待 A8。详见 `eval/baselines.md`。
-- [~] **WP4 — eval 接 SSI 分层 + entity 维收口**：① ⏳ WP2 的 S3 case 进 runner 集，scorer entity 召回吃 capture 出的两 blend 面 token（待 WP2）；② ✅ **诚实修正 A4 残留（2026-06-30）**——box-r5 entity 0.70 的"待 A7 capture 命名中间面（→~1.00）"支票已全处重述：两 fillet 带句柄埋 `StripeEdgeInter` 匿名 `DStr`、capture 未必救得了，entity 维可能止于 stage 级，0.70 是诚实下限非待兑支票（落 README §进度快照/§A4 残留/§5 + `eval/baselines.md` + `loop/investigate.py` 注释）。
+- [x] **WP1 — capture_ssi 接进 investigate loop（解除 S3 永久弃权）✅**：`ssi_probe` 判别器不再硬编 `untestable`，经 capture 桥真跑面面求交。落地三件：① `tools/capture.py` 加 `CAPTURE_SPECS` 现场注册表（按 agent case 串键控，wedge→StartSol `ChFi3d_Builder_2.cxx:944` + `HS1/HS2->Face()`；box overflow 匿名 DStr 不登记）+ `capture_spec_for`/`prereqs_ok`；② `make_fail_script` 从 case+radius 生成 fail_script，**复用 `_fillet_harness.build_shape` 单一几何真源**（顺带把 harness 的 `main()` 自调用 guard 成 `if REPRO_OUT_JSON`，使其可 import 而不自跑）；③ `loop/investigate.py` 加纯函数 `_ssi_verdict`（`SSIReport`→fired/ruled_out/untestable，`n_curves_ss=-1` 哨兵→untestable 不误判 S3 排除）+ `_ssi_discriminate`（无现场/缺 LLDB 前置→照实 untestable，**不伪绿**）。**端到端实测**：`investigate wedge 1.0` 的 S3 候选从"永久 untestable"→`ruled_out`（capture StartSol HS1/HS2 真支撑面跑 ssi_probe，得近切 **1.7184°** + section 1 条 contact 边 → 失败属 S2 非 S3），结论仍 geometric_near_tangent/S2 不变。自测：`loop/test_investigate_ssi.py`（_ssi_verdict 纯映射 + 无前置弃权）+ `tools/test_capture.py`（wedge capture_ssi 真跑，缺前置 SKIP）。**CI 无 LLDB 时 S3 仍 untestable → eval 数字不变**；有 LLDB 时 tool-call +1（capture_ssi）。⚠️ **本 WP 的"box overflow 匿名 DStr 不登记 → 照实 untestable"已被 WP5 超越**：WP5 用源码插桩把 box overflow 登记成 `env_emit` 现场（免 LLDB），box 的 S3 从 untestable → fired、tool-call 8→9（详见下 WP5）；wedge 近切仍走本 WP 的 LLDB 路径不变。
+- [~] **WP2 — 找一个真 S3 失效现场（长杆，2026-06-30 timebox 两轮 7 几何族 → 诚实负结果 + taxonomy）**：目标是 fillet **StartSol 成功**但其后接触曲线求交退化（期望 1 条 contact 实得 0）→ 真 `s3_signature=true`、两面具名可抓。**两轮真机 LLDB truth-run 未获**：① 凸/近切族（cone/cyl 凸台/wedge/flatcone）失败一律先死在 **S2 `StartSol`**（`Builder_2:944`，滚球座不进，到不了 S3）；② overlap 族——单边 box-r5 = **S3 `StripeEdgeInter`**(`Builder_0:2766` "too big radiuses")、双边 box = **S4 `PerformOneCorner`**(`Builder_C1:999` 同 "too big radiuses")，**两者几何都埋匿名 `DStr`、面不具名 → 纯 LLDB 表达式路线不可抓**（⚠️ 但可换源码插桩路线抓，box-r5 的 S3 已由 WP5 证实，见文末澄清）；③ 凹/鞍状族（cross-cyl 鞍缝 fillet 成功 / torus 缝边 = **S4 `PerformOneCorner`** `Builder_C1:873` "bouchon non ecrit" 未实现分支、DStr 埋）。**taxonomy 洞察（硬交付）：OCCT "too big radiuses" overlap 失败无论边(S3)还是角(S4)都把几何埋进匿名 `DStr` —— box-r5 的"DStr（纯 LLDB）取不到具名面"是 overlap 失败族的通性，非孤例（直接增强 WP4②）；纯 LLDB 路线唯一可抓的深现场是 S2 `StartSol`(HS1/HS2，wedge 已用）——WP5 后 overlap 型 S3 也可经源码插桩抓到（DStr 具名化）。** 真 S3 窄窗口（StartSol 返回后、PerformSurf 内 spring/contact 求交失败且 HS1/HS2 仍在 scope）理论存在但 7 族未踩中、低概率，留作后续长杆。全程证据见 scratchpad `WP2_findings.md`（未改任何已提交文件）。**范围澄清（2026-07-01，见 WP5）**：本 WP 悬赏的是"StartSol 成功后接触曲线退化"这一 S3 子型，纯 LLDB 表达式求值路线下仍未获、结论不变；但 taxonomy 里点名的另一子型——overlap 型 S3（`StripeEdgeInter` 匿名 `DStr`）——已改走**源码插桩**（而非纯 LLDB 探查）在 box-r5 真实几何上正面解决，两者是不同技术路线对同一"匿名 DStr"症状的应对，不构成对本 WP 负结果的推翻。
+- [x] **WP3 — S3/S2 互斥反事实可执行 + s3-fixture eval case ✅**：两个子任务均完成。① 反事实从"声明修法字符串"升级为**真跑两个互斥修法出判别**（root-cause-verification.md §4 腿3）：`reproduce.py` 加 `tolerance` 入参 + `_fillet_harness.py` 加 `REPRO_TOLERANCE`；`loop/investigate.py` 加 `_counterfactual_verdict`（降半径✓/容差✓ 四组合→S2/S3/S2→S3/inconclusive）+ `_probe_tolerance_fix`（升序容差阶梯 [0.001,0.01,0.1]）；S2 分类后跑 perturb_tolerance，两修法组合判别折进结论 `counterfactual`+evidence。**实测**：三态 S2 case（wedge/pocket/box）扰容差(≤0.1)均无效 → 判 [S2]，排除 S3 容差敏感，与真值一致。② **s3-fixture eval case（2026-06-30）**：`_ssi_verdict fired` 分支在 eval 路径正式覆盖——真实 S3 接触退化现场两轮 7 族未获（WP2），以合成 near-tangent fixture 诚实替代；`investigate()` 加 `ssi_fixture` 参数，直接跑 `ssi_probe(fixture='near-tangent')` → s3_signature=true → fired → root=S3；新 case `cases/s3-fixture.json` 进 runner 集，eval 7 case 全 OK，13 单测全 PASS。scorer 的"反事实\*"维仍是代理（只判携带，不打分互斥判别正确性），真分待 A8。详见 `eval/baselines.md`。
+- [~] **WP4 — eval 接 SSI 分层 + entity 维收口**：① ✅ **s3-fixture 已进 eval 集**（WP3 完成，S3 分层有 1 个正例）——真实 S3 接触退化现场仍悬挂（WP2 诚实负结果），entity 维 fixture 路径跳过 LLDB capture，N/A；② ✅ **诚实修正 A4 残留（2026-06-30）**——box-r5 entity 0.70 的"待 A7 capture 命名中间面（→~1.00）"支票已全处重述：两 fillet 带句柄埋 `StripeEdgeInter` 匿名 `DStr`、capture 未必救得了，entity 维可能止于 stage 级，0.70 是诚实下限非待兑支票（落 README §进度快照/§A4 残留/§5 + `eval/baselines.md` + `loop/investigate.py` 注释）；③ **entity 维评估维持不变（2026-07-01 追加，见 WP5）**：WP5 把 box-r5 的 S3 机制证据从"untestable"升到"fired"（真实非 fixture），但捕到的两面是通用名 `blend1`/`blend2`（`Geom_Surface` 直接落盘），不匹配 GT 的 `stripe1/2@S2` token——entity 维仍止于 0（0.70 stage 分不变），印证②"capture 未必救得了 entity"的判断，机制维证据质量提升与 entity 维打分是两件事。
+- [x] **WP5 — 源码插桩解 overlap 型 S3 匿名 DStr（box-r5 真实现场）✅（2026-06-30~07-01）**：WP2 两轮 LLDB truth-run 负结果的根因是"匿名 DStr 参数、无法用 LLDB 表达式点出具名面"——WP5 换一条技术路线：直接改 OCCT 源码。`ChFi3d_Builder_0.cxx::ChFi3d_StripeEdgeInter` 把入参 `TopOpeBRepDS_DataStructure& /*DStr*/`（原匿名、编译期告诉你"用不到"）改具名 `DStr`，在原 `throw StdFail_NotDone` 之前插入：`DStr.Surface(aDat1->Surf())`/`DStr.Surface(aDat2->Surf())` 取出两条 blend 带的 `Geom_Surface`、`BRep_Builder::MakeFace` 建面、经 `OCCT_DEBUG_SSI_OUT` 环境变量门控 `BRepTools::Write` 落盘 `blend1.brep`/`blend2.brep`（**不改变无该环境变量时的行为**，纯加法、TKFillet 已重编译验证）。落地三件：① `tools/capture.py` 加 `capture_ssi_env(case, radius)`（`reproduce()` 时置 `OCCT_DEBUG_SSI_OUT` → 读回两 brep → `ssi_probe`，免 LLDB）+ `CAPTURE_SPECS["box"] = {"method": "env_emit"}`；② `loop/investigate.py::_ssi_discriminate` 按 `spec["method"]` 分派 `env_emit`/`lldb` 两路径；③ `tools/test_capture.py` 补真跑断言（FreeCADCmd 缺位 SKIP，不伪绿）。**端到端实测（box-r5, r=5）**：捕到两 blend 面 = **同一条** R5 圆柱面（同轴 Z、同径、origin 均≈(5,5,0)，BREP 原值仅差 ~1e-15/ULP 级、u 参数方向翻转）→ `ssi_probe` 得 `min_dihedral=0.0° near_tangent=true section_edges=0` → `s3_signature=true`——即 `StripeEdgeInter` "too big radiuses" 在 3D 面层的真实表现：两条 blend 带落在同一张面上、几何重合、有界接触曲线为零（非"轴平行相切"，是重叠退化）。根因判定不变（`counterfactual` 仍判 [S2]：降半径有效/扰容差无效，S3 是传播端 proximate 非根因）；entity 维不受益（见 WP4③）。**构建前置（reproducibility 缺口，需知）**：env_emit 需重编译含此改造的 debug TKFillet。改动在独立仓 `freecad/occt`（`src/ChFi3d/ChFi3d_Builder_0.cxx`），**截至 2026-07-01 仍是未提交的工作树修改、不在 pinned `v7_8_1-fillet-debug` 历史里** → 全新 `bootstrap.sh` 克隆 / 任何 `occt/` reset 都会丢它，box S3 静默退回 `untestable`（不伪绿）。要固化须把该 edit 提交到 `v7_8_1-fillet-debug`（与其它 debug 改动同处，现行约定；`.patch` 文件已是 legacy）。缺改造时 `capture_ssi_env` 抛 RuntimeError（"blend face 未写出…TKFillet 是否含 OCCT_DEBUG_SSI_OUT 改造？"）→ `_ssi_discriminate` 照实 untestable。排错行见 `docs/occt-debugging.md` Troubleshooting 表。详见 `cases/box-r5.json::capture_result` + `eval/baselines.md`。
 
-**验收**：能对近切 case 完成三腿验证（WP1 定位面A×面B + WP3 容差/半径互斥判别）已达；**WP2 的"0 交线机制"腿因真 S3 现场两轮未获而未达（诚实负结果，见 WP2）** —— 故 eval（WP4①）的 S3 分层悬挂、entity 维收口走 WP4② 的诚实重述而非 capture 命名。
+**验收**：能对近切 case 完成三腿验证（WP1 定位面A×面B + WP3 容差/半径互斥判别）已达；**S3 eval 分层现有 s3-fixture 合成正例 ✅ + box-r5 真实 overlap 型正例 ✅（WP5）**；**WP2 悬赏的"StartSol 成功后接触曲线退化"型 S3 因真实现场两轮未获而未达（诚实负结果，见 WP2）**——这一子型 fixture 覆盖了 eval 分支，但机制保真度仍低于真实 capture；overlap 型 S3 已不再依赖 fixture。
 **面试价值**：你点名的 SSI——可定位、可独立复现、机制可观测、埋点便宜，是性价比最高的深度根因类。
 
 ---
@@ -313,24 +314,25 @@ A0 ─► A1(分层case+四元组GT+reproduce) ─► A2(工具+有效性判据+
 
 ## 5. 进度 & 下一步开工项
 
-**已完成（A0–A5 + A7 工具层 + 失效三态）**：reproduce / check_valid / ssi_probe / capture / triage_input / playbook 全落地真测；`investigate` 回路投产（★里程碑1），决策抽成 `decide(state)` 接缝（**rule + LLM 两臂**）；**6 个真值 case**（失效三态各 1 + 3 区分度 case）；**根因 Eval harness 投产（★里程碑2）** + **rule/LLM A/B（★里程碑3）**——`eval.sh --policy` 一条命令、五维 + 弃权四态分层打分、`baselines.md` 登记。**会做根因定位 + 可量化 + 可换 policy A/B、能在 viewer review 的 Agent v0 已成型，全程免裸 `IsDone()`。**
+**已完成（A0–A5 + A7 工具层 + 失效三态）**：reproduce / check_valid / ssi_probe / capture / triage_input / playbook 全落地真测；`investigate` 回路投产（★里程碑1），决策抽成 `decide(state)` 接缝（**rule + LLM 两臂**）；**7 个真值 case**（失效三态各 1 + 3 区分度 case + 1 合成 s3-fixture）；**根因 Eval harness 投产（★里程碑2）** + **rule/LLM A/B（★里程碑3）**——`eval.sh --policy` 一条命令、五维 + 弃权四态分层打分、`baselines.md` 登记；**A7 WP1–WP5 SSI 深根因类落地**（capture 桥接进 loop / 反事实互斥判别 / s3-fixture eval 正例 / 源码插桩解 box-r5 overlap 型 S3）。**会做根因定位 + 可量化 + 可换 policy A/B、能在 viewer review 的 Agent v0 已成型，全程免裸 `IsDone()`。**
 
-**实跑结论（2026-06-28，6 case，rule & LLM 同分）**：失效三态全中（失效分类 1.00）；定位全集 **0.78**（geometric 两态 1.00 = triage 实体级命名 edge#0/face#6 / overflow 0.70（命名受限、entity 维可能止于 stage，非待兑 ~1.00）/ false-green 0.40 症状-only）；弃权 **abstention precision 0.50、false_commit 0**。**LLM 各质量维 + tool-call 与 rule 逐位持平**（只慢在决策延迟，replay 后回 1.1s）——印证"模型只在决策点、其余确定性"，剩余差距诚实归因到工具层（探针分辨率）非决策层。详见 `eval/baselines.md`。
+**实跑结论（2026-07-01，7 case，rule 版）**：失效三态全中（失效分类 1.00）；定位全集 **0.82**（geometric 两态 1.00 = triage 实体级命名 edge#0/face#6 / overflow 0.70（命名受限、entity 维可能止于 stage，非待兑 ~1.00——WP5 已证机制可真实抓到但不解 entity 命名）/ false-green 0.40 症状-only / s3-fixture 1.00）；弃权 **abstention precision 0.50、false_commit 0**。LLM 臂（A5，6 case 时点）各质量维 + tool-call 与 rule 逐位持平，只慢在决策延迟——印证"模型只在决策点、其余确定性"，剩余差距诚实归因到工具层（探针分辨率）非决策层。详见 `eval/baselines.md`。
 
 **下一步开工项（不依赖未实现的东西）**：
 
-1. **真实模型输入 adapter（G26，呼应实际诉求 —— 见 §8）**：让 agent 吃**用户真模型**而非合成 builder——载入 BREP/STEP/FCStd + **指定边** + 单边 triage。这是从"合成 case 跑 eval"跨到"真实失败出诊断"的桥（投产后能直接诊断 GUI 里选边圆角失败的真模型）。
+1. **真实模型输入 adapter（G26）—— v1 已投产 ✅（2026-07-01）**：agent 现能吃**用户真模型**（`brep:/step:` 前缀载 BREP/STEP + `--edges N` 指定边 + 单边 triage 聚焦），CLI `investigate "brep:/abs.brep" <r> --edges N` 直接出诊断，见 §8。**剩**：FCStd 直读（openDocument + Part::Feature 遍历 + 多实体消歧）、多边 triage 消歧。
 2. **A6 viewer review 接线**（离线核已完成 ✅：`trajectory.py` 轨迹重放重打分 + `review.py` 标注/一致率）：把 confirm/纠正定位/标根阶段 接进 Print viewer → 写回 session（UI 活）。
 3. **扩"决策空间大"的 case**：当前 3 候选决策表 rule 已近最优、A/B 难拉开；补多候选 / 需早停省成本 / 需领域推理选探针的 case，让 LLM 臂显出价值。
-4. **A7 playbook 补 S3 节点**（容差扰动 vs 降半径互斥判别）+ **triage_input 补全**（凹凸分类 / 短边 / sliver / 容差 / 输入 BRepCheck）。
+4. **WP2 长杆仍悬挂**：真实"StartSol 成功后接触曲线退化"型 S3 现场两轮 7 几何族未获（诚实负结果），可继续踩别的几何族，或把 WP5 的源码插桩技巧（DStr 具名化 + env 门控落盘）搬到 `PerformSurf`/`PerformOneCorner` 试一次。
+5. **triage_input 补全**（凹凸分类 / 短边 / sliver / 容差 / 输入 BRepCheck）。
 
 ### 操作备忘（新窗口接手必读）
 
 - **跑测试 / eval 一律从 repo 根** `python -m agent.xxx`——**别 `cd agent`**，否则 `import agent` 包导入失败（`ModuleNotFoundError: No module named 'agent'`）。
-- **全 test 一把过**：`for m in test_session test_trajectory test_review loop.test_decide_llm loop.test_investigate_ssi loop.test_investigate_cf eval.test_scorer tools.test_{reproduce,check_valid,triage_input,playbook,ssi_probe,capture}; do python -m agent.$m; done`（FreeCADCmd/LLDB 不在则相关项 SKIP，不算错）。
+- **全 test 一把过**：`for m in test_session test_trajectory test_review loop.test_decide_llm loop.test_investigate_ssi loop.test_investigate_cf eval.test_scorer tools.test_{reproduce,check_valid,triage_input,playbook,ssi_probe,capture,g26_realmodel}; do python -m agent.$m; done`（FreeCADCmd/LLDB 不在则相关项 SKIP，不算错）。
 - **eval 跑法**：`bash agent/eval/eval.sh`（rule）；LLM 离线零计费复现 `AGENT_DECIDE_BACKEND=replay AGENT_DECIDE_RECORD=$PWD/agent/eval/llm_decisions bash agent/eval/eval.sh --policy llm`；重录真决策＝去掉 `AGENT_DECIDE_BACKEND=replay`（走 `claude_cli`，需 Claude Code 鉴权、产生计费）。
 - **改动未提交**（按约定 commit 等显式指示）；交接先 `git status` 看改动面。改工具契约 / case schema / eval 维度 / 失效本体，先更对应真源文档（本文件 / `playbook/blend-failure-ontology.md` / `docs/root-cause-verification.md`）。
-- **本文件即索引**：真实模型诊断输入看 §8(G26)；A/B 完整数据 + 复现命令看 `eval/baselines.md`；当前面 6 case GT 看 `cases/*.json`。
+- **本文件即索引**：真实模型诊断输入看 §8(G26)；A/B 完整数据 + 复现命令看 `eval/baselines.md`；当前面 7 case GT 看 `cases/*.json`。
 
 ---
 
@@ -368,20 +370,22 @@ A0 ─► A1(分层case+四元组GT+reproduce) ─► A2(工具+有效性判据+
 | **边号** | GUI 选中边，状态栏/元素名显示 `EdgeN` | 那个 **N 就是 1-based 边序**（= `shape.Edges[N-1]`）。导出后用 `Part.Shape().read("m.brep").Edges` 复核 |
 | **半径** | 失败时用的那个值 | — |
 
-**② 当前缺口（为什么还不能直接喂）**——这正是 G26：
+**② G26 v1 已投产（2026-07-01，BREP+STEP）**——原三处缺口已补：
 
-- `_fillet_harness.py` / `_triage_harness.py` 的 `build_shape()` 只认合成 builder，**不会 load 文件**。
-- `reproduce()` **不穿单边**（默认 fillet 全部边）——需把 `edges` 透传到 `REPRO_EDGES`。
-- `triage_input` 是**全 shape 统计**（min_dihedral / 凹曲率对所有边）——真模型多边时会误判，需**聚焦到选中边的两张支撑面**。
+- ✅ `_fillet_harness.py` / `_triage_harness.py` 的 `build_shape()` 认 `brep:/step:/file:` 前缀 → `Part.Shape().read()` 载真几何（两 harness 各留一份分支）。
+- ✅ `reproduce(edges=)` 透传 `REPRO_EDGES`，且 `edges` 穿**整条诊断链**（初始 observe + radius_probe 可行上界 + WP3 容差反事实），真实多边模型不再"降半径时却 fillet 全部边"而失真。
+- ✅ `triage_input(edge_index=)` → `TRIAGE_EDGE_INDEX` 单边聚焦（只报选中边的二面角/曲率，越界/无 2 支撑面 → 诚实空报告）；恰一条边时聚焦，多边回落聚合。
+- ⏳ 仍缺：**FCStd 直读**（需 `App.openDocument` + 遍历 `Part::Feature` 取 Shape、多实体消歧）——v1 请先在 GUI 里把体导出成 `.brep`/`.step`；多边 triage 消歧亦留后。
 
-**③ 补齐后怎么跑**（投产 G26 后）
+**③ 现在就能跑**
 
 ```bash
-# 载入你的 brep + 指定边 + 半径，直接出诊断（不需要 GT）
-python -m agent.loop.investigate "brep:/path/to/m.brep" <radius> --edges <N>
+# 载入你的 brep/step + 指定边 + 半径，直接出诊断（不需要 GT）；边号 N = GUI 里的 EdgeN（1-based）
+python -m agent.loop.investigate "brep:/abs/path/to/m.brep" <radius> --edges <N>
+python -m agent.loop.investigate "step:/abs/path/to/m.step" <radius> --edges <N>
 ```
 
-得到的是**诊断结论**（根阶段 + 失效三态 + 对症修法 + 证据），**不是 eval 分数**——eval 要 GT（标准答案），真实 bug 你没有；`investigate` 直接产出根因结论，这正是你要的「定位失败在哪崩、为什么崩」。
+得到的是**诊断结论**（根阶段 + 失效三态 + 对症修法 + 证据），**不是 eval 分数**——eval 要 GT（标准答案），真实 bug 你没有；`investigate` 直接产出根因结论，这正是你要的「定位失败在哪崩、为什么崩」。自测见 `tools/test_g26_realmodel.py`（合成 wedge 导出 brep/step → 前缀载回 → 诊断，自足 round-trip）。
 
 **④ 两个必须讲明的坑**
 

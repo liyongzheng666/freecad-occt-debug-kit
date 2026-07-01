@@ -66,7 +66,7 @@ scripts/workspace-doctor.sh --runtime
 
 注意：
 
-- OCCT 的两处本地改动现维护在 fork `liyongzheng666/OCCT` 的 `v7_8_1-fillet-debug` 分支上（已 commit，不再是工作树补丁）：在 Debug 构建中保留 debug map，使 LLDB 能绑定断点（否则 `-Wl,-s` 会将其 strip 掉）；以及一处 Clang 18 要求的 FreeType `tags` 强制转换。`patches/occt-debug-build.patch` 仅作为该 delta 的可读参考保留。排查表见 [docs/occt-debugging.md](docs/occt-debugging.md)。
+- OCCT 的三处本地改动现维护在 fork `liyongzheng666/OCCT` 的 `v7_8_1-fillet-debug` 分支上（不再是工作树补丁）：① 在 Debug 构建中保留 debug map，使 LLDB 能绑定断点（否则 `-Wl,-s` 会将其 strip 掉）；② 一处 Clang 18 要求的 FreeType `tags` 强制转换；③（2026-07-01）`ChFi3d_Builder_0.cxx::ChFi3d_StripeEdgeInter` 经 `OCCT_DEBUG_SSI_OUT` 环境变量门控落盘两 blend 面（纯加法，无该 env 时行为不变），供 agent 免-LLDB 抓 overlap 型 S3 失败现场（A7 WP5）。①② 已 push 到 fork；③ 本地已 commit，push 到 fork 后 fresh clone 即含（否则 `env_emit` capture 退回 untestable，不伪绿）。`patches/occt-debug-build.patch` 仅作为 ①② delta 的可读参考保留。排查表见 [docs/occt-debugging.md](docs/occt-debugging.md)。
 - FreeCAD 从 fork `liyongzheng666/FreeCAD` 的 `local-occt-integration` 分支钉死在 commit `2b7e9a6896b`（`FreeCAD/main` 的祖先），当前与上游零 diff、精确可复现；本 kit 仍把仅本地的 CMake preset 与 `TOPONAMING.md` 参考说明从 `templates/` 还原进去（见上一步第 3 步）。
 - 构建完成后，用 `code .` 打开工作区，并从[从这里开始](#从这里开始)继续。
 

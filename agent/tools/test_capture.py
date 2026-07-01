@@ -11,7 +11,7 @@ import tempfile
 from pathlib import Path
 
 from agent.tools.capture import (
-    _resolve, capture, capture_spec_for, capture_ssi, make_fail_script,
+    _resolve, capture, capture_spec_for, capture_ssi, capture_ssi_env, make_fail_script,
 )
 
 _FAIL_FILLET = """import Part
@@ -37,7 +37,9 @@ def main() -> int:
     check("wedge 断点 = StartSol", spec and spec["breakpoint"] == "ChFi3d_Builder_2.cxx:944")
     check("wedge 两面表达式具名", spec and spec["face_a_expr"] == "HS1->Face()"
           and spec["face_b_expr"] == "HS2->Face()")
-    check("box overflow 无登记现场（匿名 DStr）", capture_spec_for("box") is None)
+    box_spec = capture_spec_for("box")
+    check("box overflow 有登记现场（env_emit，2026-06-30 DStr 改造后）", box_spec is not None)
+    check("box 现场 method=env_emit（免 LLDB）", box_spec and box_spec.get("method") == "env_emit")
 
     with tempfile.TemporaryDirectory(prefix="failscript_") as d:
         sp = Path(make_fail_script("wedge", 1.0, out_dir=d))
@@ -72,6 +74,16 @@ def main() -> int:
                           tangent_eps_deg=10.0)
         check("wedge capture_ssi 近切命中", rep.near_tangent and 0.0 < rep.min_dihedral_deg < 10.0)
         check("wedge 非 S3（section 有 contact 边）", not rep.s3_signature and rep.n_section_edges >= 1)
+
+    # —— 3) 真跑 env_emit（box 现场，免 LLDB，只需 FreeCADCmd + 改造后的 debug OCCT）——
+    try:
+        env_rep = capture_ssi_env("box", 5.0, tangent_eps_deg=10.0)
+    except FileNotFoundError as e:
+        print(f"\nSKIP env_emit 集成: {e}")
+    else:
+        check("box env_emit 近切命中（两 blend 带同轴平行）", env_rep.near_tangent)
+        check("box env_emit → s3_signature=True（section=0，接触退化）",
+              env_rep.s3_signature and env_rep.n_section_edges == 0)
 
     print(f"\n{'ALL PASS' if not fails else str(len(fails)) + ' FAILED: ' + ', '.join(fails)}")
     return 1 if fails else 0

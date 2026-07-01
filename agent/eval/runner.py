@@ -89,7 +89,8 @@ def run_case(case_id: str, doc: dict, *, policy: str = "rule") -> dict:
     trace: list[ToolResult] = []
     t0 = time.perf_counter()
     try:
-        concl = investigate(run["case"], radius=run["radius"], policy=policy, trace=trace)
+        concl = investigate(run["case"], radius=run.get("radius"), ssi_fixture=run.get("ssi_fixture"),
+                            policy=policy, trace=trace)
     except FileNotFoundError as e:           # FreeCADCmd 缺位 → SKIP（不假绿）
         row.update(status="SKIP", reason=str(e), wall_s=round(time.perf_counter() - t0, 2))
         return row

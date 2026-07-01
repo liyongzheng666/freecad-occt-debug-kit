@@ -18,6 +18,14 @@
     "exception": "StdFail_NotDone: 'StripeEdgeInter : fillets have too big radiuses'",
     "captured": "2026-06-27, debug OCCT 7.8.1（OSO 调试映射完好，断点能绑）"
   },
-  "agent_match": "investigate(box, r=5) → 根 S2 / radius_probe 命中可行上界[2.5,5) / S3 诚实标 untestable —— 与真值 root=S2 一致 ✅（免埋点诊断 = 埋点真值）",
-  "note_failure_mode": "这是 overflow（带重叠，交太多），非近切（交太少）。ssi_probe 的近切 S3 签名不适用于本例；radius_probe 才是对的判别器。近切 S3 需另造几何。"
+  "agent_match": "investigate(box, r=5) → 根 S2 / radius_probe 命中可行上界[2.5,5) / S3 env_emit fired（s3_signature=True：两 blend 圆柱面近切 0.0° + section=0）—— 与真值 root=S2 一致 ✅；S3 机制现已从 untestable → fired（实真实 blend 面，非 fixture）。定位 0.70（stage 满分/entity 0——两带句柄 stripe1/2@S2 无法免埋点命名，entity 维止于 stage 级）。",
+  "capture_result": {
+    "method": "env_emit（ChFi3d_Builder_0.cxx::StripeEdgeInter 改造：DStr 具名化 + OCCT_DEBUG_SSI_OUT 门控 BRepTools::Write，2026-06-30；需重编译 debug TKFillet）",
+    "blend1": "Geom_CylindricalSurface R=5，axis=Z(0,0,1)，origin≈(5,5,0)（BREP 原值 4.9999999999999991,4.9999999999999991,0）",
+    "blend2": "Geom_CylindricalSurface R=5，axis=Z(0,0,1)，origin≈(5,5,0)（BREP 原值 5.0000000000000009,4.9999999999999991,0），仅 u 参数方向翻转",
+    "geometry_note": "两 blend 带是**同一条** R=5 圆柱面（同轴同径，origin 仅差 ~1e-15/ULP 级），几何重合——非'近切'亦非'轴平行相切'，而是重叠退化。",
+    "ssi_probe": "s3_signature=True near_tangent=True min_dihedral=0.0° n_section_edges=0",
+    "interpretation": "两 fillet 带落在同一张圆柱面上 → 面面求交无有界接触曲线（section_edges=0）→ S3 接触退化。这正是 StripeEdgeInter 'too big radiuses'（2D pcurve overlap）在 3D 面层的表现：两带重叠、接触面积为零。已经 env_emit 真实抓取验证（非 fixture），BREP 原文见 capture 落盘。"
+  },
+  "note_failure_mode": "这是 overflow（带重叠，接触曲线退化）。ssi_probe 对两张 blend 面确实给出 s3_signature=True（两圆柱 0°，section=0）——env_emit 路径已证。radius_probe(S2) + ssi_probe(S3) 双腿均 fired；根因仍 S2（降半径有效/扰容差无效 → counterfactual 判 [S2]），S3 是传播端（proximate）。"
 }

@@ -33,15 +33,23 @@ _OCC_CAPTURE = _REPO / "scripts" / "occ_capture.py"
 _TOOLS_DIR = Path(__file__).resolve().parent       # 含 _fillet_harness.py（fail_script 复用其 build_shape）
 
 # 已知失败现场的 SSI capture spec，按 **agent case 串**键控（与 _fillet_harness.build_shape 同约定）。
-# 只登记 LLDB truth-run 验证过、句柄具名可抓的现场——box overflow 的 StripeEdgeInter 两带在匿名
-# DStr 里（见记忆 fillet-overflow-crash-site），无法干净取面，故不登记 → 该处 SSI 判别照实 untestable。
+# method: "lldb"     — LLDB 断点 + occ_emit_shape（需 debug OCCT + occ_capture.py）
+# method: "env_emit" — OCCT_DEBUG_SSI_OUT 环境变量触发 TKFillet 内直接写出 blend face BRep；
+#                      不需要 LLDB，需要 ChFi3d_Builder_0.cxx 含改造（StripeEdgeInter 写文件分支）。
 CAPTURE_SPECS = {
-    # 薄楔近切：StartSol，HS1/HS2 = Handle(BRepAdaptor_Surface) 两支撑面，具名可抓。
+    # 薄楔近切：StartSol，HS1/HS2 = Handle(BRepAdaptor_Surface) 两支撑面，具名可抓（LLDB）。
     # 见 cases/wedge-sliver.json truth_run + 记忆 fillet-startsol-capture-point（2026-06-27 验证）。
     "wedge": {
+        "method": "lldb",
         "breakpoint": "ChFi3d_Builder_2.cxx:944",
         "face_a_expr": "HS1->Face()",
         "face_b_expr": "HS2->Face()",
+    },
+    # box overflow: StripeEdgeInter 两 blend 带 — 改造 ChFi3d_Builder_0.cxx 后可经
+    # OCCT_DEBUG_SSI_OUT 环境变量直接写出 blend1/2.brep，不需要 LLDB。
+    # （见 2026-06-30 ChFi3d_Builder_0.cxx 改动；DStr 反注释 + throw 前写文件）
+    "box": {
+        "method": "env_emit",
     },
 }
 
@@ -138,7 +146,7 @@ def capture(fail_script, breakpoint, emits, *, session_dir=None, timeout_s=300) 
 
 def capture_ssi(fail_script, breakpoint, face_a_expr, face_b_expr,
                 *, tangent_eps_deg=5.0, timeout_s=300) -> SSIReport:
-    """capture 失败现场两面 → ssi_probe：S3 机制判别用到真 fillet 失败上。"""
+    """capture 失败现场两面 → ssi_probe：S3 机制判别用到真 fillet 失败上（LLDB 路径）。"""
     breps = capture(
         fail_script, breakpoint,
         [("ssi/faceA", face_a_expr), ("ssi/faceB", face_b_expr)],
@@ -147,6 +155,38 @@ def capture_ssi(fail_script, breakpoint, face_a_expr, face_b_expr,
     if "ssi/faceA" not in breps or "ssi/faceB" not in breps:
         raise RuntimeError(f"两面未全部 capture 到：{list(breps)}")
     return ssi_probe(breps["ssi/faceA"], breps["ssi/faceB"], tangent_eps_deg=tangent_eps_deg)
+
+
+def capture_ssi_env(case: str, radius: float, *,
+                    tangent_eps_deg: float = 5.0, timeout_s: int = 60) -> SSIReport:
+    """env-emit 路径：reproduce + OCCT_DEBUG_SSI_OUT → blend1/2.brep → ssi_probe。
+
+    不需要 LLDB；需要 TKFillet 已编入 OCCT_DEBUG_SSI_OUT 分支
+    （ChFi3d_Builder_0.cxx StripeEdgeInter 改造，2026-06-30）。
+    """
+    import os
+    from agent.tools.reproduce import reproduce
+
+    out_dir = Path(tempfile.mkdtemp(prefix="ssi_env_"))
+    prev = os.environ.get("OCCT_DEBUG_SSI_OUT")
+    try:
+        os.environ["OCCT_DEBUG_SSI_OUT"] = str(out_dir)
+        reproduce(case, radius=radius, timeout_s=timeout_s)
+    finally:
+        if prev is None:
+            os.environ.pop("OCCT_DEBUG_SSI_OUT", None)
+        else:
+            os.environ["OCCT_DEBUG_SSI_OUT"] = prev
+
+    b1, b2 = out_dir / "blend1.brep", out_dir / "blend2.brep"
+    if not b1.exists() or not b2.exists():
+        found = [f.name for f in out_dir.iterdir()]
+        raise RuntimeError(
+            f"env_emit: blend face 文件未写出（case={case!r} r={radius}，"
+            f"out_dir={out_dir}，found={found}）。"
+            "TKFillet 是否含 OCCT_DEBUG_SSI_OUT 改造？"
+        )
+    return ssi_probe(str(b1), str(b2), tangent_eps_deg=tangent_eps_deg)
 
 
 if __name__ == "__main__":

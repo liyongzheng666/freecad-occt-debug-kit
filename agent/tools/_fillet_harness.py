@@ -21,6 +21,14 @@ import traceback
 
 def build_shape(case):
     import Part
+    # G26 真实模型输入：case 带 brep:/step:/file: 前缀 → 从磁盘读整个 shape（BREP/STEP）。
+    # 走现成 Part.Shape().read()（按扩展名选 reader，同 _ssi_harness.load_face）；这里要整个
+    # solid（非 Faces[0]）。要求绝对路径（FreeCADCmd cwd 不保证）。FCStd 不在 v1（需 openDocument）。
+    scheme = case.split(":", 1)[0]
+    if scheme in ("brep", "step", "file"):
+        s = Part.Shape()
+        s.read(case.split(":", 1)[1])
+        return s
     if case == "box":
         return Part.makeBox(10, 20, 30)          # 经典盒子；最短边 10
     if case == "box-flat":

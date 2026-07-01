@@ -6,39 +6,44 @@
 
 ## 规则版 policy（A3 基线）
 
-> 跑于 2026-06-28，real 后端（debug OCCT 7.8.1 + FreeCADCmd），6 个 case（**失效三态各 1 + clean 弃权 + false-green + 过度弃权**）。
+> 跑于 2026-06-28（原始 6 case）+ **2026-06-30 更新（A7 WP3 s3-fixture，共 7 case）**。real 后端（debug OCCT 7.8.1 + FreeCADCmd）。
 > 分层＝按 GT `failure_class`；clean 自成 `clean/abstain` 层、false-green 归 `其它(无三态类)`。
 > 决策走 `decide(state)` 接缝（policy=rule；A5 换 decide_llm 同表对比）。
 > **定位准确率只在"承诺定位"的 case 上算；弃权 case 定位记 n/a，对错归 abstention（分账不混）。**
 >
 > **2026-06-29 更新（A7 WP1+WP3）**：下表 tool-call/wall 已含 A7 改动——**WP1** S3 候选经 capture 桥真跑 ssi_probe（near-tangent case +1 tool、wedge wall 升到 ~7s 因 LLDB capture）；**WP3** S2 分类后真跑互斥反事实 perturb_tolerance（升序容差阶梯，+≤3 reproduce/case）。**质量维（定位/失效分类/机制*/校准/弃权）逐位不变**——A7 是把第三腿（机制 capture + 反事实互斥）做实，不动定位正确性。
+>
+> **2026-06-30 更新（A7 WP3 s3-fixture）**：新增第 7 个 case `s3-fixture`——合成 fixture S3 case，覆盖 `_ssi_verdict fired` 分支（真实 S3 接触退化现场两轮 7 族未获，fixture 是诚实合成替代）。`investigate()` 加 `ssi_fixture` 路径：跳过 reproduce/playbook/radius_probe，直接跑 `ssi_probe(fixture='near-tangent')` → s3_signature=true → fired → 结论 root=S3。定位/失效分类均 1.00，tool=1（单次 ssi_probe），wall<0.3s。algorithmic_overflow 层由 n=1 升至 n=2，层均定位 0.85。
+>
+> **2026-07-01 更新（A7 WP5 box-r5 真实 S3 env_emit capture）**：`ChFi3d_Builder_0.cxx::StripeEdgeInter` 源码插桩（`DStr` 具名化 + `OCCT_DEBUG_SSI_OUT` 门控落盘两 blend 面），`_ssi_discriminate` 加 `env_emit` 路径 → **box-r5 的 S3 判别从"untestable"（无登记现场）升到"fired"（真实 blend 面，非 fixture）**：`capture_ssi_env('box',5)` 得两同轴 R5 圆柱 → `min_dihedral=0.0° section_edges=0` → `s3_signature=true`。**这不改任何质量维分数**（机制\*仍是 localization_depth 代理、定位仍 0.70——见下逐 case），只把 box-r5 的 tool-call 从 8→**9**（S3 候选真跑 `capture_ssi_env` +1，此前 untestable 不发工具）。故 algorithmic_overflow 层均 tool 4.5→**5.0**、全集 5.71→**5.86**。**box-r5 现是 overlap 型 S3 的真实机制现场**（三腿全实：radius_probe 定 S2 + ssi_probe 证 S3 proximate + 互斥反事实判根=S2），s3-fixture 退居"接触退化型 S3"的合成替补。
 
 | 层 | n | 定位 | 失效分类 | 机制* | 反事实* | 校准 | 平均 tool-call | 平均 wall_s |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | clean/abstain | 1 | n/a | n/a | n/a | n/a | n/a | 2.0 | ~0.3 |
-| algorithmic_overflow | 1 | 0.70 | 1.00 | 0.20 | 携带 | 0.70 | 8.0 | ~1.7 |
-| geometric_curvature | 1 | 1.00 | 1.00 | 0.50 | 携带 | 0.70 | 8.0 | ~1.8 |
-| geometric_near_tangent | 2 | 1.00¹ | 1.00 | 0.50 | 携带 | 0.70 | 9.5 | ~5.0 |
+| algorithmic_overflow | **2** | **0.85** | 1.00 | 0.20 | 携带 | 0.72 | **5.0** | ~1.2 |
+| geometric_curvature | 1 | 1.00 | 1.00 | 0.50 | 携带 | 0.70 | 8.0 | ~1.9 |
+| geometric_near_tangent | 2 | 1.00¹ | 1.00 | 0.50 | 携带 | 0.70 | 9.5 | ~4.8 |
 | 其它(无三态类)·false-green | 1 | 0.40 | n/a | 0.50 | 0.00 | 0.75 | 2.0 | ~0.4 |
-| **全集** | **6** | **0.78** | **1.00** | **0.42** | — | **0.71** | **6.5** | ~2.4 |
+| **全集** | **7** | **0.82** | **1.00** | **0.38** | — | **0.72** | **5.86** | ~2.1 |
 
 ¹ near-tangent 层 n=2 但定位均值只算 1 个**承诺**case（`wedge-sliver` 1.00）；另一 `wedge-thin-abstain` 弃权 → 定位 n/a（不入均值），其对错见弃权汇总。
 
-逐 case：`box-r5`/`pocket-blind-hole`/`wedge-sliver` 三态根 S2 全中；`box-clean` 良性 → **正确弃权**；`thinplate-false-green` 薄板双面 fillet 自交但 IsDone=True → **抓出 false-green**（不信 IsDone），但只达症状 S3、未回溯 S2 根 → 定位 0.40（**首个触发症状-only 部分分**）；`wedge-thin-abstain` 极薄楔可行半径低于探针下限 → **过度弃权**。
+逐 case：`box-r5`/`pocket-blind-hole`/`wedge-sliver` 三态根 S2 全中；**`s3-fixture` fixture S3 全中**（定位 1.00、失效分类 1.00、tool=1）；`box-clean` 良性 → **正确弃权**；`thinplate-false-green` 薄板双面 fillet 自交但 IsDone=True → **抓出 false-green**（不信 IsDone），但只达症状 S3、未回溯 S2 根 → 定位 0.40（**首个触发症状-only 部分分**）；`wedge-thin-abstain` 极薄楔可行半径低于探针下限 → **过度弃权**。
 
-**弃权/校准（集合量）**：correct_abstain=1 / wrong_abstain=1 / correct_commit=4 / **false_commit=0**；**abstention precision = 0.50**（弃权 2 次对 1 次——规则版在极薄楔上探针太粗、过度弃权，A5 可改进）。
+**弃权/校准（集合量）**：correct_abstain=1 / wrong_abstain=1 / correct_commit=5 / **false_commit=0**；**abstention precision = 0.50**（弃权 2 次对 1 次——规则版在极薄楔上探针太粗、过度弃权，A5 可改进）。
 
 读数说明（诚实边界）：
 
 - **失效分类 1.00（三态全覆盖全中）**：免埋点诊断（triage_input 量近切角/凹曲率）精确区分 algorithmic / curvature / near-tangent 三态，与真值一致——A4 的核心可量化结论。
 - **定位分层不均是真实信号，不是噪声**：
   - `wedge`（近切）/`pocket`（曲率）定位 **1.00**——triage 量出失效现场（近切边 `edge#0` @1.718° = LLDB 真值 1.72°；凹曲率面 `face#6` @r3），免埋点即可**实体级定位**。
-  - `box`（overflow）定位 **0.70**——stage 满分但 entity 0：重叠的两 fillet 带是 S2 **中间面**，免埋点无法命名。其句柄埋在 `ChFi3d_StripeEdgeInter` 的**匿名 `DStr`**（见 `cases/box-r5.json` truth_run + 记忆 fillet-overflow-crash-site），**capture 取不到具名面 → entity 维可能止于 stage 级；0.70 是诚实下限，不保证 A7 能升到 ~1.00**——与 wedge 近切「capture 可命名 HS1/HS2」相反，overflow 的实体定位增量 capture 未必兑得了，别把这格当待兑现的支票。
+  - `box`（overflow）定位 **0.70**——stage 满分但 entity 0：重叠的两 fillet 带是 S2 **中间面**，免埋点无法命名。其句柄埋在 `ChFi3d_StripeEdgeInter` 的**匿名 `DStr`**（见 `cases/box-r5.json` truth_run + 记忆 fillet-overflow-crash-site），**capture 取不到具名面 → entity 维可能止于 stage 级；0.70 是诚实下限，不保证 A7 能升到 ~1.00**——与 wedge 近切「capture 可命名 HS1/HS2」相反，overflow 的实体定位增量 capture 未必兑得了，别把这格当待兑现的支票。**WP5（2026-07-01）验证了这个预判：**源码插桩把 `DStr` 具名化后，capture **确实取到了两 blend 面**（S3 机制从 untestable→fired），但取出的是通用 `Geom_Surface`（落盘为 `blend1`/`blend2`），**匹配不上 GT 的 `stripe1/2@S2` 命名 token → entity 维仍 0、定位仍 0.70**。即"capture 救得了机制维证据、救不了 entity 维命名"——机制真实性↑与 entity 打分是两码事，0.70 落定为已验证下限（非待兑支票）。
   - `thinplate`（false-green）定位 **0.40**——**首个症状-only 部分分**：agent 抓出 IsDone=True 但自交（不信 IsDone ✅），但只达症状 S3、未回溯 S2 根（branch-B 不跑 radius_probe）。改进项：false-green 检出后也 radius_probe 回溯 S2 根。
 - **弃权是一等结果，与定位分账**：clean 正确弃权（`box-clean`）、过度弃权（`wedge-thin-abstain`，可行半径 <探针下限 0.002 → 漏掉本可定位的 S2）——两者定位都记 **n/a**（不混入定位均值），对错全归 **abstention precision = 0.50**。这把"会不会幻觉/会不会过度弃权"和"定位准不准"两件事分开量——一个过度自信 LLM 会在 clean 上 false_commit、一个保守 LLM 会到处 wrong_abstain，都被抓。
 - **机制\* / 反事实\***：机制仅 `localization_depth` 深度代理；反事实仅判"是否携带"（false-green 的 branch-B 未携带靶向修法 → 0.00，是诚实的待补点）。真分待 truth-run 中间态 / OCCT 执行（A8）。
 - **A7 WP1（机制腿 capture）做实但未改分**：S3 候选不再永久 untestable——near-tangent 经 capture 桥抓真支撑面跑 ssi_probe 得 `ruled_out`（wedge：1.7184° + section 1 条 contact 边 → 属 S2 非 S3）。这条机制证据进了结论的 evidence，但 scorer 的"机制\*"维仍是 `localization_depth` 代理、不直接打分 capture 结果——故分值不变、tool-call/wall 上升（增量是"证据质量"非"分数"，诚实标注）。
-- **A7 WP3（反事实腿互斥判别）做实但未改分**：反事实从"声明修法字符串"升级为**真跑两个互斥修法出判别**——降半径（radius_probe 已 fired）+ 扰容差（perturb_tolerance，不动半径）。三态 S2 case 实测 **扰容差(≤0.1)无效 → 判 [S2]，排除 S3 容差敏感**（wedge/pocket/box 均如此，与真值一致——它们确非 S3 数值病态）。但 scorer 的"反事实\*"维仍只判"是否携带靶向修法"，**不打分互斥判别正确性**——真分待 scorer 加"反事实判别 vs GT"维（A8）。当前 WP3 的可见产出在结论 `counterfactual` 文案（`互斥反事实[S2/S3/S2->S3]：…`），非 eval 分。
+- **A7 WP3（反事实腿互斥判别 + s3-fixture eval）做实**：两个子任务：① 反事实从"声明修法字符串"升级为**真跑两个互斥修法出判别**——降半径（radius_probe 已 fired）+ 扰容差（perturb_tolerance，不动半径）。三态 S2 case 实测 **扰容差(≤0.1)无效 → 判 [S2]，排除 S3 容差敏感**（wedge/pocket/box 均如此，与真值一致——它们确非 S3 数值病态）；scorer 的"反事实\*"维仍只判"是否携带靶向修法"，真分待 scorer 加"反事实判别 vs GT"维（A8）。② **s3-fixture case 新增**（2026-06-30）：`_ssi_verdict fired` 分支在 eval 路径正式覆盖——两轮 7 族真实 S3 现场未获（WP2 诚实负结果），以合成 near-tangent fixture 替代；investigate() 新增 `ssi_fixture` 路径直接跑 ssi_probe，跳过 reproduce/radius_probe；eval 7 case 全 OK，13 单测全 PASS。
+- **A7 WP5（box-r5 真实 overlap 型 S3，源码插桩 env_emit）做实但未改分**（2026-07-01）：`ChFi3d_Builder_0.cxx::StripeEdgeInter` 把入参 `TopOpeBRepDS_DataStructure& /*DStr*/` 具名化，在 `throw` 前经 `OCCT_DEBUG_SSI_OUT` 门控 `BRepTools::Write` 落盘两 blend 面（纯加法、无环境变量时行为不变）；`_ssi_discriminate` 按 `spec["method"]` 分派 `env_emit`（免 LLDB，`reproduce` 时置环境变量→读回 brep→ssi_probe）。**box-r5 的 S3 判别从"untestable"→"fired"**（真实 blend 面：两同轴 R5 圆柱 0.0° section=0 → s3_signature=true）。与 WP1 同理——机制**证据质量**升（S3 从"没法测"到"真实 fired，非 fixture"），但 scorer 机制\*维仍是 `localization_depth` 代理、定位仍 0.70（entity 命名不受益，见上"box"逐 case），故分值不变、tool-call 8→9。这条把 box-r5 从"S3 只能 fixture 替身"升级为"overlap 型 S3 的真实机制现场"，三腿全实。
 - **校准 0.70~0.75**：置信与 stage 定位正确性之差。
 
 > GT 基线说明：`box-r5`/`wedge-sliver` 是 LLDB 埋点真值；`pocket-blind-hole` 是**几何第一性真值**（r>凹曲率半径 ⟹ 滚球无解，几何必然，不依赖算法实现）+ radius_probe 边界证据（可行/不可行界恰落在曲率半径 3 上）+ triage 独立佐证 face#6 r3——honest 区分两类 GT 来源。

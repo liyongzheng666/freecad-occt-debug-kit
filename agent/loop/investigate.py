@@ -40,9 +40,27 @@ def _log(verbose, msg):
         print("  · " + msg)
 
 
-def _observe(case, r, out_dir, sink, verbose, tolerance=None):
-    """reproduce + 记一条 ToolResult。tolerance：WP3 互斥反事实，只动容差不动半径（None=不动）。"""
-    run = reproduce(case, radius=r, tolerance=tolerance, out_dir=out_dir)
+def _single_edge_index(edges):
+    """G26：edges（逗号分隔 1-based 串 / None）→ 恰好一条边时返回该 1-based int，否则 None。
+
+    triage 单边聚焦只在"用户指定唯一一条边"时有意义；多边/无边 → None → triage 回落全 shape
+    聚合（多边时"哪条边崩"本就歧义，交给 stage 级诊断）。
+    """
+    if not edges:
+        return None
+    parts = [p.strip() for p in str(edges).split(",") if p.strip()]
+    if len(parts) != 1:
+        return None
+    try:
+        return int(parts[0])
+    except ValueError:
+        return None
+
+
+def _observe(case, r, out_dir, sink, verbose, tolerance=None, edges=None):
+    """reproduce + 记一条 ToolResult。tolerance：WP3 互斥反事实，只动容差不动半径（None=不动）。
+    edges：G26 单/多边聚焦，透传 reproduce（None=全部边，向后兼容）。"""
+    run = reproduce(case, radius=r, tolerance=tolerance, out_dir=out_dir, edges=edges)
     tag = f"r={r}" + (f" tol={tolerance}" if tolerance is not None else "")
     sink.append(ToolResult(
         tool="reproduce", ok=(run.status == "ok"),
@@ -70,20 +88,20 @@ def _validate(brep, sink, verbose):
     return v
 
 
-def _is_feasible(case, r, out_dir, sink, verbose, tolerance=None):
-    """可行 = reproduce 跑完产形状 且 check_valid 判有效（S6，非 IsDone）。tolerance 见 _observe。"""
-    run = _observe(case, r, out_dir, sink, verbose, tolerance=tolerance)
+def _is_feasible(case, r, out_dir, sink, verbose, tolerance=None, edges=None):
+    """可行 = reproduce 跑完产形状 且 check_valid 判有效（S6，非 IsDone）。tolerance/edges 见 _observe。"""
+    run = _observe(case, r, out_dir, sink, verbose, tolerance=tolerance, edges=edges)
     if run.status != "ok" or not run.is_done or not run.bad_shape:
         return False
     return _validate(run.bad_shape, sink, verbose).valid
 
 
-def _probe_feasible_bound(case, requested, out_dir, sink, verbose):
-    """降序探阶梯，返回 (首个可行半径 or None, 其上方最小不可行半径)。"""
+def _probe_feasible_bound(case, requested, out_dir, sink, verbose, edges=None):
+    """降序探阶梯，返回 (首个可行半径 or None, 其上方最小不可行半径)。edges：G26 聚焦透传。"""
     prev_infeasible = requested  # requested 已知不可行
     for f in _CF_FRACTIONS:
         r = round(requested * f, 4)
-        if _is_feasible(case, r, out_dir, sink, verbose):
+        if _is_feasible(case, r, out_dir, sink, verbose, edges=edges):
             return r, prev_infeasible
         prev_infeasible = r
     return None, prev_infeasible
@@ -93,10 +111,10 @@ def _probe_feasible_bound(case, requested, out_dir, sink, verbose):
 _CF_TOLERANCES = [0.001, 0.01, 0.1]
 
 
-def _probe_tolerance_fix(case, requested, out_dir, sink, verbose):
-    """同半径只扰容差（升序阶梯）→ 首个能恢复有效实体(S6)的容差 or None（None=容差修法无效）。"""
+def _probe_tolerance_fix(case, requested, out_dir, sink, verbose, edges=None):
+    """同半径只扰容差（升序阶梯）→ 首个能恢复有效实体(S6)的容差 or None（None=容差修法无效）。edges：G26 聚焦透传。"""
     for tol in _CF_TOLERANCES:
-        if _is_feasible(case, requested, out_dir, sink, verbose, tolerance=tol):
+        if _is_feasible(case, requested, out_dir, sink, verbose, tolerance=tol, edges=edges):
             return tol
     return None
 
@@ -119,20 +137,21 @@ def _counterfactual_verdict(lower_radius_ok: bool, tol_fix):
 
 # ---- 决策表驱动定位（playbook：症状 → 候选 → 判别器）--------------------------
 
-def _run_discriminator(case, radius, cand, out, sink, verbose):
+def _run_discriminator(case, radius, cand, out, sink, verbose, edges=None):
     """跑一个候选的 localize 判别器，返回 (status, evidence_str)。
 
     status ∈ {"fired"(命中该阶段) | "ruled_out"(排除) | "untestable"(此处无法运行)}。
+    edges：G26 单/多边聚焦，透传到 radius_probe（S0 export-only 分支不理边、故不传）。
     """
     tool = cand.get("localize", {}).get("tool")
-    if tool == "check_valid_input":                        # S0：输入几何是否本就无效
+    if tool == "check_valid_input":                        # S0：输入几何是否本就无效（radius=0 导出，忽略 edges）
         base = reproduce(case, radius=0.0, out_dir=out)
         if not base.bad_shape:
             return "untestable", "无法导出输入几何"
         valid = _validate(base.bad_shape, sink, verbose).valid
         return ("ruled_out", "输入 check_valid 通过") if valid else ("fired", "输入 check_valid 不通过")
     if tool == "radius_probe":                             # S2：降半径能否恢复有效实体
-        feas_r, infeas_floor = _probe_feasible_bound(case, radius, out, sink, verbose)
+        feas_r, infeas_floor = _probe_feasible_bound(case, radius, out, sink, verbose, edges=edges)
         if feas_r is not None:
             return "fired", f"降半径恢复有效实体，可行上界 ∈ [{feas_r}, {infeas_floor})"
         return "ruled_out", "降半径阶梯内无可行半径"
@@ -161,13 +180,39 @@ def _ssi_verdict(report) -> tuple[str, str]:
 
 
 def _ssi_discriminate(case, radius, sink, verbose):
-    """capture 失败现场两面跑 ssi_probe → S3 裁定。无登记现场 / 缺 LLDB 前置 → untestable（不伪绿）。"""
+    """capture 失败现场两面跑 ssi_probe → S3 裁定。
+
+    method=env_emit: OCCT_DEBUG_SSI_OUT 写出 blend face，不需要 LLDB。
+    method=lldb:     LLDB 断点 + occ_emit_shape（需 debug OCCT 前置）。
+    无登记现场 → untestable（不伪绿）。
+    """
     from agent.tools.capture import (
-        capture_spec_for, capture_ssi, make_fail_script, prereqs_ok,
+        capture_spec_for, capture_ssi, capture_ssi_env, make_fail_script, prereqs_ok,
     )
     spec = capture_spec_for(case)
     if spec is None:
         return "untestable", "无已登记 SSI capture 现场（断点+两面表达式），免埋点无法取失败现场两面"
+
+    method = spec.get("method", "lldb")
+
+    if method == "env_emit":
+        try:
+            report = capture_ssi_env(case, radius, tangent_eps_deg=_NEAR_TANGENT_EPS_DEG)
+        except Exception as e:                             # noqa: BLE001
+            return "untestable", f"capture_ssi_env 失败：{type(e).__name__}: {e}"
+        sink.append(ToolResult(
+            tool="capture_ssi_env", ok=True,
+            summary=(f"s3_sig={report.s3_signature} near_tangent={report.near_tangent} "
+                     f"dihedral={report.min_dihedral_deg}° section={report.n_section_edges}"),
+            payload={"s3_signature": report.s3_signature, "near_tangent": report.near_tangent,
+                     "min_dihedral_deg": report.min_dihedral_deg,
+                     "n_section_edges": report.n_section_edges},
+            source="agent/tools/capture.py"))
+        status, ev = _ssi_verdict(report)
+        _log(verbose, f"  ssi_probe(env_emit) → {status}: {ev}")
+        return status, ev
+
+    # method == "lldb"
     if not prereqs_ok():
         return "untestable", "缺 LLDB/debug-OCCT capture 前置（CI 环境照实弃权，非 S3 排除）"
     try:
@@ -175,7 +220,7 @@ def _ssi_discriminate(case, radius, sink, verbose):
         report = capture_ssi(fail_script, spec["breakpoint"],
                              spec["face_a_expr"], spec["face_b_expr"],
                              tangent_eps_deg=_NEAR_TANGENT_EPS_DEG)
-    except Exception as e:                                 # noqa: BLE001 — capture/lldb 失败不静默判 S3
+    except Exception as e:                                 # noqa: BLE001
         return "untestable", f"capture_ssi 失败：{type(e).__name__}: {e}"
     sink.append(ToolResult(
         tool="capture_ssi", ok=True,
@@ -204,8 +249,8 @@ def _verdicts_to_evidence(node, run, radius, verdicts):
     return evs
 
 
-def _classify_s2_failure(case, radius, node, sink, verbose):
-    """S2(radius_probe 命中)失败的细分：triage_input → 三态之一。
+def _classify_s2_failure(case, radius, node, sink, verbose, edges=None):
+    """S2(radius_probe 命中)失败的细分：triage_input → 三态之一。edges：G26 单边聚焦透传 triage。
 
     返回 (class_key, class_dict, why, entities) 或 None。entities 是免埋点能诚实定位到的
     实体（canonical token，供 eval entity 召回）：
@@ -219,7 +264,7 @@ def _classify_s2_failure(case, radius, node, sink, verbose):
     if not classes:
         return None
     try:
-        t = triage_input(case)
+        t = triage_input(case, edge_index=_single_edge_index(edges))
     except Exception as e:  # noqa: BLE001 — triage 不可用则不细分
         _log(verbose, f"  triage 跳过（{type(e).__name__}），不细分失效类别")
         return None
@@ -253,8 +298,47 @@ def _classify_s2_failure(case, radius, node, sink, verbose):
     return key, info, why, entities
 
 
-def _diagnose_via_playbook(case, radius, run, out, sink, verbose, policy="rule", traj=None) -> Conclusion:
-    """按 symptom 命中 playbook 节点 → policy.decide 选判别器逐个跑 → 确定性合成结论。
+def _investigate_fixture_ssi(case_id: str, fixture: str, sink, verbose) -> Conclusion:
+    """合成 fixture SSI case：直接跑 ssi_probe(fixture=...) → _ssi_verdict。
+
+    跳过 reproduce / playbook / radius_probe，用 fixture 构造两面跑面面求交。
+    设计意图：在 eval 路径覆盖 _ssi_verdict fired 分支（真实 S3 接触退化现场两轮 7 族未获，
+    见 WP2；fixture 路径是诚实的合成替代）。
+    """
+    from agent.tools.ssi_probe import ssi_probe
+    try:
+        report = ssi_probe(fixture=fixture)
+    except Exception as e:                              # noqa: BLE001
+        return Conclusion(abstained=True,
+                          abstain_reason=f"fixture ssi_probe({fixture!r}) 失败：{type(e).__name__}: {e}")
+    sink.append(ToolResult(
+        tool="fixture_ssi", ok=True,
+        summary=(f"fixture={fixture!r} s3_sig={report.s3_signature} near_tangent={report.near_tangent} "
+                 f"dihedral={report.min_dihedral_deg}° section={report.n_section_edges}"),
+        payload={"fixture": fixture, "s3_signature": report.s3_signature,
+                 "near_tangent": report.near_tangent, "min_dihedral_deg": report.min_dihedral_deg,
+                 "n_section_edges": report.n_section_edges},
+        source="agent/tools/ssi_probe.py"))
+    _log(verbose, f"fixture_ssi({fixture!r}) → s3_sig={report.s3_signature} "
+                  f"dihedral={report.min_dihedral_deg}° section={report.n_section_edges}")
+    status, ev = _ssi_verdict(report)
+    if status != "fired":
+        return Conclusion(abstained=True,
+                          abstain_reason=f"fixture ssi_probe({fixture!r}) → {status}: {ev}（预期 fired）")
+    return Conclusion(hypotheses=[CausalHypothesis(
+        stage=Stage("S3"), chain=[Stage("S3")],
+        cause=f"面面求交退化（fixture={fixture!r}：近切夹角<5° + section_edges=0 → S3 接触退化）",
+        entities=[],
+        localization_depth="stage",
+        confidence=0.75,
+        counterfactual="heal 近切支撑面使接触曲线非退化；fixture 路径（合成，非真实 fillet 失败现场）",
+        evidence=[Evidence(f"fixture ssi_probe({fixture!r})：{ev}", source="agent/tools/ssi_probe.py")],
+        failure_class="algorithmic_overflow",
+    )])
+
+
+def _diagnose_via_playbook(case, radius, run, out, sink, verbose, policy="rule", traj=None, edges=None) -> Conclusion:
+    """按 symptom 命中 playbook 节点 → policy.decide 选判别器逐个跑 → 确定性合成结论。edges：G26 聚焦透传。
 
     决策（跑哪个候选 / 何时收）走 `decide(state)` 接缝（policy=rule|llm）；结论合成（取最
     distal 命中者为根 + 失效三态细分）是决策之后的确定性后处理。rule 臂 = 顺序穷尽候选，
@@ -278,7 +362,7 @@ def _diagnose_via_playbook(case, radius, run, out, sink, verbose, policy="rule",
         if action.get("conclude"):
             break
         cand = action["run"]
-        status, ev = _run_discriminator(case, radius, cand, out, sink, verbose)
+        status, ev = _run_discriminator(case, radius, cand, out, sink, verbose, edges=edges)
         verdicts.append((cand, status, ev))
         if traj is not None:
             traj.append({"t": "verdict", "stage": cand["stage"],
@@ -298,7 +382,7 @@ def _diagnose_via_playbook(case, radius, run, out, sink, verbose, policy="rule",
     evidence = _verdicts_to_evidence(node, run, radius, verdicts)
 
     # S2 命中 → 进一步细分失效类别（geometric 降半径 / algorithmic 可 SSI 互裁）
-    cls = _classify_s2_failure(case, radius, node, sink, verbose) if cand["stage"] == "S2" else None
+    cls = _classify_s2_failure(case, radius, node, sink, verbose, edges=edges) if cand["stage"] == "S2" else None
     failure_class = None
     entities: list[str] = []
     if cls is not None:
@@ -308,7 +392,7 @@ def _diagnose_via_playbook(case, radius, run, out, sink, verbose, policy="rule",
         salv = info.get("salvageable")
         # WP3 第三腿：互斥反事实。radius_probe 已 fired → 降半径有效；再跑 perturb_tolerance
         # （不动半径），两修法成功组合判别 S2 / S3 / S2→S3（root-cause §4 腿3）。
-        tol_fix = _probe_tolerance_fix(case, radius, out, sink, verbose)
+        tol_fix = _probe_tolerance_fix(case, radius, out, sink, verbose, edges=edges)
         cf_label, cf_why = _counterfactual_verdict(True, tol_fix)
         _log(verbose, f"  互斥反事实 [{cf_label}]：{cf_why}")
         counterfactual = (f"修法：{info['fix']}"
@@ -350,28 +434,40 @@ def investigate(
     case_id: str,
     *,
     radius: float | None = None,
+    ssi_fixture: str | None = None,
     policy: str = "rule",
     out_dir: str | None = None,
     session_dir: str | None = None,
     trace: list[ToolResult] | None = None,
     trajectory: list | None = None,
     verbose: bool = False,
+    edges: str | None = None,
 ) -> Conclusion:
     """policy: "rule"(A3 规则版下限基线) | "llm"(A5)。返回分级因果结论。
 
+    ssi_fixture: 合成 fixture 路径（A7 WP3）——当 case 的 agent_run 含 ssi_fixture 字段时，跳过
+    reproduce/playbook/radius_probe，直接跑 ssi_probe(fixture=ssi_fixture)。用于在 eval 路径覆盖
+    _ssi_verdict fired 分支（真实 S3 接触退化现场两轮 7 族未获；fixture 是诚实合成替代）。
+    edges: G26 单/多边聚焦——逗号分隔 1-based 边号（"3"/"1,4"）。真实模型（case_id 带 brep:/step:
+    /file: 前缀）配指定边时给；透传 reproduce(REPRO_EDGES) 全诊断链 + triage 单边聚焦（恰一条边时）。
+    None → fillet 全部边（合成 case 现状，向后兼容，eval 不传 → 数字不变）。
     决策走 `decide(state)` 接缝（loop/decide_rule|decide_llm，同签名可 A/B）；observe / 判别器
     执行 / 结论合成一律确定性。trace：调用方传入的列表则把每次工具调用的 ToolResult 追加进去
     （eval runner 据此数 tool-call 成本，G11）。trajectory：传入则收集有序轨迹步（observe / decide
     /verdict / conclude，A6/G9），可经 `agent.trajectory.TrajectoryWriter` 落盘 → 离线重放重打分。
     """
-    if policy not in _POLICIES:
-        raise ValueError(f"未知 policy={policy}（可选 {list(_POLICIES)}）")
-    if radius is None:
-        raise ValueError("decide policy 需要 radius")
-
-    out = out_dir or tempfile.mkdtemp(prefix="investigate_")
-    sink: list[ToolResult] = trace if trace is not None else []
-    conclusion = _investigate_loop(case_id, float(radius), out, sink, verbose, policy, trajectory)
+    if ssi_fixture:
+        out = out_dir or tempfile.mkdtemp(prefix="investigate_")
+        sink: list[ToolResult] = trace if trace is not None else []
+        conclusion = _investigate_fixture_ssi(case_id, ssi_fixture, sink, verbose)
+    else:
+        if policy not in _POLICIES:
+            raise ValueError(f"未知 policy={policy}（可选 {list(_POLICIES)}）")
+        if radius is None:
+            raise ValueError("decide policy 需要 radius")
+        out = out_dir or tempfile.mkdtemp(prefix="investigate_")
+        sink = trace if trace is not None else []
+        conclusion = _investigate_loop(case_id, float(radius), out, sink, verbose, policy, trajectory, edges=edges)
 
     if trajectory is not None:                            # 末步：结论（供离线重放重打分）
         from agent.trajectory import conclusion_to_dict
@@ -385,9 +481,9 @@ def investigate(
     return conclusion
 
 
-def _investigate_loop(case, radius, out, sink, verbose, policy="rule", traj=None) -> Conclusion:
-    _log(verbose, f"observe: reproduce {case} @ r={radius}")
-    run = _observe(case, radius, out, sink, verbose)
+def _investigate_loop(case, radius, out, sink, verbose, policy="rule", traj=None, edges=None) -> Conclusion:
+    _log(verbose, f"observe: reproduce {case} @ r={radius}" + (f" edges={edges}" if edges else ""))
+    run = _observe(case, radius, out, sink, verbose, edges=edges)
     if traj is not None:
         traj.append({"t": "observe", "case": case, "radius": radius, "policy": policy,
                      "run_end": {"status": run.status, "exception": run.exception,
@@ -395,7 +491,7 @@ def _investigate_loop(case, radius, out, sink, verbose, policy="rule", traj=None
 
     # —— 分支 A：算法没跑完（典型 StdFail_NotDone）→ policy.decide 驱动逐候选判别 ——
     if run.status != "ok" and run.phase == "fillet_notdone":
-        return _diagnose_via_playbook(case, radius, run, out, sink, verbose, policy, traj)
+        return _diagnose_via_playbook(case, radius, run, out, sink, verbose, policy, traj, edges=edges)
 
     # —— 分支 B：跑完产出形状 → 复判有效性 ——
     if run.status == "ok" and run.bad_shape:
@@ -454,10 +550,28 @@ def format_conclusion(c: Conclusion, case: str, radius: float) -> str:
 
 
 if __name__ == "__main__":
-    import sys
-    case = sys.argv[1] if len(sys.argv) > 1 else "box"
-    radius = float(sys.argv[2]) if len(sys.argv) > 2 else 1000.0
-    print(f"[investigate] case={case} radius={radius} —— 真跑 FreeCADCmd + occ-debug-mesh\n")
-    c = investigate(case, radius=radius, policy="rule", verbose=True)
+    import argparse
+
+    ap = argparse.ArgumentParser(
+        prog="python -m agent.loop.investigate",
+        description="圆角缺陷根因诊断。case 可为合成 builder（box/wedge/pocket…）或真实模型"
+                    "（brep:/abs/path.brep、step:/abs/path.step；G26）。",
+        epilog="例：investigate box 5.0  |  investigate \"brep:/abs/m.brep\" 5.0 --edges 3",
+    )
+    ap.add_argument("case", nargs="?", default="box",
+                    help="合成 builder id 或 brep:/step:/file: 前缀的绝对路径（G26）")
+    ap.add_argument("radius", nargs="?", type=float, default=1000.0, help="fillet 半径")
+    ap.add_argument("--edges", default=None,
+                    help="逗号分隔 1-based 边号（如 3 或 1,4）；真实模型指定边必给，省略=全部边")
+    ap.add_argument("--policy", default="rule", help="决策臂：rule（默认）| llm")
+    ap.add_argument("--quiet", action="store_true", help="静默（默认逐步打印诊断过程）")
+    args = ap.parse_args()
+
+    verbose = not args.quiet
+    tag = f"[investigate] case={args.case} radius={args.radius}"
+    if args.edges:
+        tag += f" edges={args.edges}"
+    print(tag + " —— 真跑 FreeCADCmd + occ-debug-mesh\n")
+    c = investigate(args.case, radius=args.radius, policy=args.policy, edges=args.edges, verbose=verbose)
     print()
-    print(format_conclusion(c, case, radius))
+    print(format_conclusion(c, args.case, args.radius))

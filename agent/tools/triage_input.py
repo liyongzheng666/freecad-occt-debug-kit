@@ -20,8 +20,13 @@ from agent.tools.reproduce import _resolve_freecadcmd
 _HARNESS = Path(__file__).resolve().parent / "_triage_harness.py"
 
 
-def triage_input(case_id: str, *, near_tangent_eps_deg: float = 10.0, timeout_s: int = 60) -> TriageReport:
-    """跑 triage harness → TriageReport（min_dihedral_deg / min_support_curv_radius / near_tangent_pairs）。"""
+def triage_input(case_id: str, *, near_tangent_eps_deg: float = 10.0, timeout_s: int = 60,
+                 edge_index: int | None = None) -> TriageReport:
+    """跑 triage harness → TriageReport（min_dihedral_deg / min_support_curv_radius / near_tangent_pairs）。
+
+    edge_index：G26 单边聚焦——1-based 边号。设了则只报该边的二面角/曲率（真实模型多边不误判）；
+    None → 对全 shape 聚合（合成 case 现状，向后兼容）。
+    """
     bin_path = _resolve_freecadcmd()
     with tempfile.TemporaryDirectory(prefix="triage_") as d:
         out_json = Path(d) / "triage.json"
@@ -29,6 +34,11 @@ def triage_input(case_id: str, *, near_tangent_eps_deg: float = 10.0, timeout_s:
         env["PYTHONIOENCODING"] = "utf-8"
         env["TRIAGE_CASE"] = case_id
         env["TRIAGE_OUT_JSON"] = str(out_json)
+        if edge_index is not None:
+            env["TRIAGE_EDGE_INDEX"] = str(edge_index)
+        else:
+            env.pop("TRIAGE_EDGE_INDEX", None)          # 防继承外层 env 残留
+
         try:
             proc = subprocess.run([str(bin_path), str(_HARNESS)], env=env,
                                   capture_output=True, text=True, timeout=timeout_s)
