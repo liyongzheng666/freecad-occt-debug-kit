@@ -288,9 +288,16 @@ def _classify_s2_failure(case, radius, node, sink, verbose, edges=None):
             entities = [f"face#{t.min_support_curv_face}"]
         why = (f"r={radius} > 支撑面凹曲率半径 {t.min_support_curv_radius}"
                + (f"（凹曲率面 {', '.join(entities)}）" if entities else ""))
+    elif _single_edge_index(edges) is not None:
+        # P2.1（G1/G2）：单条 blend 边不存在"相邻带"，故不可能是 band-band 重叠
+        # （StripeEdgeInter 'too big radiuses' 语义要求 ≥2 带）。单带失败 = blend 半径
+        # 超出相邻面局部尺度 → 离开支撑面 / 盖过 edge loop（Parasolid loop_c / overflow）。
+        key = "face_overflow"
+        why = (f"单条 blend 边（edge#{_single_edge_index(edges)}）+ 平面/非近切/无曲率"
+               f"（最小二面角 {t.min_dihedral_deg}°）→ 单带 overflow，非两带重叠")
     else:
         key = "algorithmic_overflow"
-        why = f"平面/非近切/无曲率约束（最小二面角 {t.min_dihedral_deg}°）"
+        why = f"多边 blend + 平面/非近切/无曲率约束（最小二面角 {t.min_dihedral_deg}°）→ 相邻带可重叠"
     info = classes.get(key)
     if info is None:
         return None

@@ -131,7 +131,17 @@ def reproduce(
 
     if not out_json.exists():
         tail = (proc.stderr or proc.stdout or "")[-300:]
-        return RunEnd(status="failed", exception=f"harness 无输出(rc={proc.returncode}): {tail}", phase="harness")
+        # P1.1（G6）：区分"内核崩溃"与"harness 逻辑没产出"。POSIX 下被信号打死 →
+        # returncode 为负（-N）；经 shell 时表现为 128+N（如 SIGSEGV=139）。两者都表示
+        # FreeCADCmd/OCCT 进程异常终止（段错误/abort），归 kernel_crash → investigate 分支 C
+        # 当 infrastructure_failure 兜底弃权，绝不静默当成功或挂起。⚠ 已知：OCCT 圆角在极端
+        # 半径下的自然崩溃未必隔离可复现（同进程多半径累积的假象，见 docs 诚实修正）。
+        rc = proc.returncode
+        if rc < 0 or rc >= 128:
+            sig = -rc if rc < 0 else rc - 128
+            return RunEnd(status="failed", phase="kernel_crash",
+                          exception=f"FreeCADCmd 进程被信号 {sig} 终止(rc={rc})，疑似 OCCT 崩溃: {tail}")
+        return RunEnd(status="failed", exception=f"harness 无输出(rc={rc}): {tail}", phase="harness")
 
     data = json.loads(out_json.read_text(encoding="utf-8"))
 

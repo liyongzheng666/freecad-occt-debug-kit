@@ -1,0 +1,15 @@
+{
+  "_note": "P0.1+P2.1（G1，Parasolid Ch74 / Fig74-9 overflow onto boss）：40x40x20 box + 10^3 boss 骑跨顶边，单顶边 r=20。OCCT 内部处理 overflow 到 r≤~15，r=20 才 NotDone（gen_final.py 半径扫描实证）。STEP models/E5_overflow_boss_r20.step，verified_fillet=NotDone。edges=6（读回 STEP 核定，≠导出前的 7）。",
+  "case_id": "E5-boss-face-overflow",
+  "input": { "builder": "step", "path": "agent/cases/models/E5_overflow_boss_r20.step", "radius": 20.0, "edges": "6", "note": "OCCT handles overflow r<=~15" },
+  "agent_run": { "case": "step:agent/cases/models/E5_overflow_boss_r20.step", "radius": 20.0, "edges": "6" },
+  "labels": { "convexity": "convex", "topo": "single-edge", "radius": "constant", "regime": "overflow" },
+  "ground_truth": {
+    "true_chain": ["S2"],
+    "entities": [],
+    "entities_human": "单条顶边 blend 溢出到 boss 邻面；单带，非 band-band 重叠。",
+    "expected_evidence": "单边 blend r=20（=40 面半宽）+ 平面非近切无曲率 → face_overflow（离开面/溢出到 boss）。OCCT overflow 处理 r≤~15 成功，r=20 NotDone。",
+    "aligned_fix": "lower_radius（≤~15，OCCT 自带 overflow 处理）",
+    "failure_class": "face_overflow"
+  }
+}

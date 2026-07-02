@@ -1,0 +1,15 @@
+{
+  "_note": "P1.2（G7，假绿真实模型 fixture）：40x40x20 box - R6 圆柱槽，凹圆边 r=15。隔离进程 makeFillet 返回 IsDone=true 但 isValid()=FALSE（12 面，e4_iso.py 实证；非崩溃——早前 exit139 是同进程多半径累积假象，已诚实修正）。reproduce 报 status=ok/is_done=true，check_valid 报 valid=false（现有 BRepCheck 即抓到，无需 BOP）。测『禁用裸 IsDone』在真实模型上生效。edges=8（读回 STEP 核定，≠导出前的 7）。",
+  "case_id": "E4-groove-false-green",
+  "input": { "builder": "step", "path": "agent/cases/models/E4_concave_groove_r8.step", "radius": 15.0, "edges": "8", "note": "r=8 success; r=15/20 IsDone-but-invalid (false-green); r>=30 NotDone" },
+  "agent_run": { "case": "step:agent/cases/models/E4_concave_groove_r8.step", "radius": 15.0, "edges": "8" },
+  "labels": { "convexity": "concave", "topo": "single-edge", "radius": "constant", "regime": "false-green" },
+  "ground_truth": {
+    "true_chain": ["S6"],
+    "entities": [],
+    "entities_human": "IsDone=true 但 BRepCheck 报 1 处 invalid subshape（非自交 → S6 而非 S3）。假绿：裸 IsDone 会误判成功。",
+    "expected_evidence": "reproduce status=ok/is_done=true（裸 IsDone 判成功）；check_valid valid=false（1 invalid_subshape, self_int=0）→ S6 假绿",
+    "aligned_fix": "以 check_valid(S6 有效性) 为成功判据，拒绝 IsDone 代理奖励；降半径≤~10 得真有效实体",
+    "failure_class": null
+  }
+}

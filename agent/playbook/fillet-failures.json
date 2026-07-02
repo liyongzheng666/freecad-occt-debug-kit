@@ -43,10 +43,17 @@
           "salvageable": false
         },
         "algorithmic_overflow": {
-          "discriminator": "else（平面、非近切、无曲率约束）",
+          "discriminator": "else（平面、非近切、无曲率约束）且 blend 边数 ≥2（存在相邻带可重叠）",
           "cause": "两相邻圆角面重叠（StripeEdgeInter 'too big radiuses'），几何可裁剪",
           "fix": "SSI 互裁（trim）或 perturb_tolerance；降半径亦可但非必需",
           "salvageable": true
+        },
+        "face_overflow": {
+          "_note": "P2.1（G1/G2，Parasolid Ch74 overflow + §77.3.4 loop_c）：单条 blend 边不可能与'相邻带'重叠，故 else 分支须按 blend 边数二分——单边=单带 overflow，非 band-band 重叠。fixture: E3(薄板)/E5(boss)/E6(薄楔)。",
+          "discriminator": "else 且 blend 边数 == 1（单带，不存在相邻带重叠）",
+          "cause": "单条 blend 半径超出相邻面局部尺度：blend 离开支撑面 / 盖过 edge loop 伸出实体（Parasolid loop_c / overflow onto neighbour），非两带重叠",
+          "fix": "lower_radius（≤ 相邻面局部半宽）或 heal/延伸邻面；无 SSI 互裁语义（无第二条带可裁）",
+          "salvageable": false
         }
       }
     }

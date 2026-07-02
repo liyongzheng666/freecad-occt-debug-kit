@@ -1,0 +1,15 @@
+{
+  "_note": "P0.1+P2.1（G1/G2，Parasolid §77.3.4 loop_c / Ch74 overflow）：3x30x30 薄板单竖边 r=5（>3 厚度）→ 单带 blend 离开支撑面/盖过 edge loop。STEP models/E3_thinplate_loop_overflow_r5.step，verified_fillet=NotDone。这是 agent 新增 failure_class=face_overflow 的验收 case（改动前会被误判成 algorithmic_overflow『两相邻带重叠』）。",
+  "case_id": "E3-thinplate-face-overflow",
+  "input": { "builder": "step", "path": "agent/cases/models/E3_thinplate_loop_overflow_r5.step", "radius": 5.0, "edges": "1", "dims": [3, 30, 30] },
+  "agent_run": { "case": "step:agent/cases/models/E3_thinplate_loop_overflow_r5.step", "radius": 5.0, "edges": "1" },
+  "labels": { "convexity": "convex", "topo": "single-edge", "radius": "constant", "regime": "overflow" },
+  "ground_truth": {
+    "true_chain": ["S2"],
+    "entities": [],
+    "entities_human": "单条 blend 边 + 相邻面局部半宽<r；无第二条带 → 非 band-band 重叠。免埋点止于 stage。",
+    "expected_evidence": "单边(count==1) blend + 平面非近切无曲率约束 → face_overflow：blend 半径超相邻面局部尺度，离开面/伸出 loop（非两带重叠）",
+    "aligned_fix": "lower_radius（≤相邻面局部半宽 1.5）或延伸邻面；无 SSI 互裁语义（单带）",
+    "failure_class": "face_overflow"
+  }
+}
