@@ -141,7 +141,7 @@
 
 ### LLM replay 臂语义漂移（诚实标注，待重录）
 
-playbook 节点加 S4 候选后，llm replay 忠实重放**旧轨迹**：录制的 conclude 决策在 3 候选后触发（state 签名按已跑裁定匹配、命中旧录制）→ **llm replay 臂不跑 S4 判别**（box-r5 llm tool=8 vs rule 10），质量维仍逐位一致（S4 本会 ruled_out，不影响结论）。**重录**（`claude_cli`，有计费）可消除该语义差；在重录前 A/B 的 tool-call 维不可比，质量维可比。
+playbook 节点加 S4 候选后，llm replay 忠实重放**旧轨迹**：录制的 conclude 决策在 3 候选后触发（state 签名按已跑裁定匹配、命中旧录制）→ **llm replay 臂不跑 S4 判别**（box-r5 llm tool=8 vs rule 10），质量维仍逐位一致（S4 本会 ruled_out，不影响结论）。**重录**（`claude_cli`，有计费）可消除该语义差；在重录前 A/B 的 tool-call 维不可比，质量维可比。→ **✅ 已于 2026-07-03 全量重录**（见 2026-07-02③ 决策空间账本的三臂对照表），该语义差已消除。
 
 > 复现：`bash agent/eval/eval.sh`；测试 `python -m agent.loop.test_investigate_vertex`（含纯函数 + box 回归断言）。
 
@@ -164,6 +164,16 @@ playbook 节点加 S4 候选后，llm replay 忠实重放**旧轨迹**：录制�
 
 ### 决策空间账本（A5 残留的正面回应）
 
-此前：1 签名 4 候选、rule 顺序穷尽近最优 → LLM 臂无从显价值。现在：**2 签名 7 候选、两条判别通路**（NotDone：S0/S2/S3/S4；假绿：S2/S3/S4），假绿判别有真实的早停/择序空间（fg_support 便宜、fg_endcap 依赖 locality 计算）。⚠ **LLM replay 对新签名无录制**：`--policy llm` replay 遇 E7/E8/thinplate/E4（假绿路径）将 FileNotFoundError → runner 记 SKIP（诚实，不假绿）；显 LLM 价值需用 claude_cli 重录（计费，待定）。
+此前：1 签名 4 候选、rule 顺序穷尽近最优 → LLM 臂无从显价值。现在：**2 签名 7 候选、两条判别通路**（NotDone：S0/S2/S3/S4；假绿：S2/S3/S4）。
+
+**✅ 已重录（2026-07-03，claude_cli 全量 13 case）**，并得到**决策空间的首个正收益证据**：
+
+| 臂 | 定位(全集) | 失效分类 | false_commit | 平均 tool | 平均 wall_s |
+| --- | --- | --- | --- | --- | --- |
+| rule | 0.92 | 1.00 | 0 | **6.23** | ~2.0 |
+| llm（claude_cli 真跑） | 0.92 | 1.00 | 0 | **5.85** | ~36.5（决策延迟） |
+| llm（replay，零计费） | 0.92 | 1.00 | 0 | **5.85** | ~1.9 |
+
+**LLM 臂首次做出与 rule 不同的真实决策——语义正确的早停**：S2 fired 后更 proximate 的判别（S3/S4）无论结果都不改根（root=最 distal fired），LLM 按 system prompt 语义提前收（E2/E3/E5/pocket tool 9→8、wedge-sliver 11→10），**质量维零损失、成本 -6%**；box-r5（S3 有真实机制证据可采）则跑满与 rule 同。replay 臂与 real 臂**每格逐位一致**（13/13 OK 零 SKIP）——record/replay 纪律在 2 签名 7 候选下依然成立。
 
 > 复现：`bash agent/eval/eval.sh`；`python -m agent.loop.test_investigate_falsegreen`（21 断言：纯裁定 + 四锚点端到端 + 回归量）。
