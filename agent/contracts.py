@@ -65,6 +65,7 @@ class TriageReport:
     min_dihedral_deg: float = 180.0                          # 最小二面角；小=有近切边
     min_support_curv_radius: Optional[float] = None          # 支撑面最小曲率半径（平面=None）
     min_support_curv_face: Optional[int] = None              # 上述最小凹曲率支撑面的 OCCT 面序号（曲率型失效现场，实体级定位）
+    vertex_report: list = field(default_factory=list)       # P2.2/S4：目标边端点顶点构型 [{vertex,n_edges,n_blended,convexity_mix}]
 
 
 @dataclass

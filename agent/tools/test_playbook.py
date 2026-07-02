@@ -22,8 +22,8 @@ def main() -> int:
     n = query_playbook({"exception": _NOTDONE, "phase": "fillet_notdone"})
     check("命中 overflow 节点", n is not None and n["id"] == "fillet-notdone-overflow")
     check("近端阶段 S2", n["proximate_stage"] == "S2")
-    check("候选按 distal->proximate = [S0,S2,S3]",
-          [c["stage"] for c in n["root_cause_candidates"]] == ["S0", "S2", "S3"])
+    check("候选按 distal->proximate = [S0,S2,S3,S4]（P2.2 加 S4 顶点候选）",
+          [c["stage"] for c in n["root_cause_candidates"]] == ["S0", "S2", "S3", "S4"])
     check("exception_contains 子串匹配（非全等）", n is not None)  # _NOTDONE 含 StdFail_NotDone
 
     # —— 不匹配 ——

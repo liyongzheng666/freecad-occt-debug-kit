@@ -157,7 +157,42 @@ def _run_discriminator(case, radius, cand, out, sink, verbose, edges=None):
         return "ruled_out", "降半径阶梯内无可行半径"
     if tool == "ssi_probe":                                # S3：capture 失败现场两面 → 面面求交（A7 WP1）
         return _ssi_discriminate(case, radius, sink, verbose)
+    if tool == "vertex_probe":                             # S4：顶点构型（P2.2，免埋点）
+        from agent.tools.vertex_probe import vertex_probe
+        try:
+            report = vertex_probe(case, edges)
+        except Exception as e:                             # noqa: BLE001 — harness 失败照实 untestable
+            return "untestable", f"vertex_probe 失败：{type(e).__name__}: {e}"
+        sink.append(ToolResult(
+            tool="vertex_probe", ok=True,
+            summary=f"{len(report)} 个 blend 落脚顶点："
+                    + "; ".join(f"v{r['vertex']}(e{r['n_edges']}/b{r['n_blended']})" for r in report[:6]),
+            payload={"vertex_report": report},
+            source="agent/tools/vertex_probe.py"))
+        status, ev = _vertex_verdict(report)
+        _log(verbose, f"  vertex_probe → {status}: {ev}")
+        return status, ev
     return "untestable", f"未知判别工具 {tool}"
+
+
+def _vertex_verdict(report: list[dict]) -> tuple[str, str]:
+    """vertex_report → S4 候选裁定（纯函数，可离线单测，与 _ssi_verdict 同模式）。
+
+    fired（vertex_c 构型，Parasolid §77.2.1）：某顶点 n_edges≥4 且 2≤n_blended<n_edges
+    ——4+ 边顶点部分圆角，corner 收敛不了；**全部圆角是合法例外**（§77.2.1 明文），
+    3 边顶点任意组合、以及仅 1 条 blend 落脚的顶点都按合法处理（等半径滚球下
+    异凸 3 边两圆也合法，§72.6.2(b)）→ ruled_out。
+    空报告 → untestable（harness 没给数据 ≠ 排除，不伪绿）。
+    """
+    if not report:
+        return "untestable", "vertex_report 为空（无 blend 落脚顶点数据）"
+    bad = [r for r in report if r["n_edges"] >= 4 and 2 <= r["n_blended"] < r["n_edges"]]
+    if bad:
+        detail = "; ".join(f"vertex#{r['vertex']}: {r['n_edges']} 边中 {r['n_blended']} 条被圆角"
+                           f"（凸性 {'/'.join(r['convexity_mix'])}）" for r in bad)
+        return "fired", f"顶点构型过复杂（vertex_c：4+ 边顶点部分圆角）：{detail}"
+    summ = "; ".join(f"v{r['vertex']}(e{r['n_edges']}/b{r['n_blended']})" for r in report[:6])
+    return "ruled_out", f"全部 blend 落脚顶点构型合法（{summ}）→ S4 顶点复杂度排除"
 
 
 def _ssi_verdict(report) -> tuple[str, str]:

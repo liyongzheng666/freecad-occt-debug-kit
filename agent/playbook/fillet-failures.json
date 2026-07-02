@@ -26,6 +26,14 @@
           "localize": { "tool": "ssi_probe", "check": "s3_signature" },
           "mechanism": { "evidence": "期望 1 条 contact 曲线，实得 0；两面近切" },
           "counterfactual": { "fix": "perturb_tolerance", "must_not_change": "radius" }
+        },
+        {
+          "stage": "S4",
+          "cause": "顶点收敛失败：4+ 边顶点上部分边被圆角，corner 拓扑无法闭合（Parasolid vertex_c 构型；全部圆角是合法例外）",
+          "localize": { "tool": "vertex_probe", "check": "vertex_config" },
+          "mechanism": { "evidence": "某 blend 落脚顶点 n_edges>=4 且 2<=n_blended<n_edges" },
+          "truth_anchor": "ChFi3d_Builder_C1.cxx:999 PerformOneCorner 'too big radiuses'（WP2 记录；⚠ 2026-07-02 P2.2 复核未复现——8 族简单构型全收敛或死于 S2，今日双边 box r=12 LLDB 实测崩点是 StartSol Builder_2.cxx:944；S4-proximate 现场仍悬（诚实负结果），本候选目前只在真实 S4 构型出现时提供判别，见 test_investigate_vertex 文档）",
+          "counterfactual": { "fix": "reduce_blended_edges_at_vertex 或 lower_radius", "must_not_change": "tolerance" }
         }
       ],
       "failure_classes": {
