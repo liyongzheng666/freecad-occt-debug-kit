@@ -36,6 +36,7 @@
           "counterfactual": { "fix": "reduce_blended_edges_at_vertex 或 lower_radius", "must_not_change": "tolerance" }
         }
       ],
+      "_failure_classes_scope": "仅本签名（S2-NotDone 细分）；假绿签名不用四态（failure_class=None，见下）",
       "failure_classes": {
         "_note": "S2(radius_probe 命中)失败的细分——investigate 用 triage_input 的 min_dihedral_deg / min_support_curv_radius 判：geometric=降半径/改输入才有解；algorithmic=几何可救(SSI 互裁)。对应 review:demo agent/demo/convex_concave。",
         "geometric_near_tangent": {
@@ -64,6 +65,33 @@
           "salvageable": false
         }
       }
+    },
+    {
+      "id": "fillet-falsegreen-invalid",
+      "_note": "决策空间②（2026-07-02③，曲面猎场）：IsDone=true 但 check_valid 判无效（假绿）。此前分支 B 零决策（self-int→S3 否则 S6 硬启发式）；现按 falsegreen_probe 两判别量（支撑面类型 / 缺陷端局部性+自由端）细分根因。全候选 ruled_out/untestable → 兜底 = 原启发式逐位不变（thinplate/E4 回归保护）。实证锚点：E7 cylboss 端盖缺陷 d_end=0.000 / E8 loft BSpline 支撑 / E4 F11 d_end=14（安全排除）。",
+      "symptom": { "phase": "false_green" },
+      "proximate_stage": "S6",
+      "root_cause_candidates": [
+        {
+          "stage": "S2",
+          "cause": "参数(B-surface)支撑面上的 blend 面构造写出坏几何：B-spline/Bezier 偏移有界、延伸受限（Parasolid bsurf_c 族），IsDone 但面自交/不可定向",
+          "localize": { "tool": "fg_support_probe", "check": "parametric_support" },
+          "counterfactual": { "fix": "避免直接在参数支撑面上 blend（先转解析/分割），或降半径远离参数面边界", "must_not_change": "tolerance" }
+        },
+        {
+          "stage": "S3",
+          "cause": "两 blend 带中段交叠自交（薄件双侧带相遇），拓扑缝合仍完成 → 假绿",
+          "localize": { "tool": "fg_selfint_mid", "check": "selfint_not_end_local" },
+          "counterfactual": { "fix": "lower_radius（≤半厚）或 SSI 互裁", "discriminates_from": "S4" }
+        },
+        {
+          "stage": "S4",
+          "cause": "端盖/corner 构造在曲面终止处写出坏几何（NotClosed/Unorientable/端部自交环）：blend 自由端撞曲面，PerformIntersectionAtEnd 未能干净闭合但未抛错",
+          "localize": { "tool": "fg_endcap_probe", "check": "defect_end_local" },
+          "truth_anchor": "E7 cylboss：缺陷面 F1/F5 d_end=0.000（末端精确命中），r=2~5.9 全假绿（半径无关 → 构造缺陷非尺寸问题）",
+          "counterfactual": { "fix": "改边选（让 blend 不终止在曲面上）/延长被圆角边越过曲面区", "must_not_change": "radius" }
+        }
+      ]
     }
   ]
 }

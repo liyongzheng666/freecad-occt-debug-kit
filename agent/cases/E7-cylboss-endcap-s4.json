@@ -1,0 +1,16 @@
+{
+  "_note": "决策空间②/S4 真实 case（2026-07-02③ 曲面猎场）：40x40x20 box + R6 圆柱 boss 骑跨顶边（E5 的曲面版），fillet 被基圆截断的顶边段（自由端终止在 boss 圆柱面上）。r=2/4/5/5.9 全部假绿（IsDone=true 但 invalid）——端盖构造在曲面终止处写坏几何且不抛错。缺陷局部性实证：F1/F5 d_end=0.000（末端精确命中）、含 NotClosed/Unorientable/SelfIntersectingWire 混合篮。半径无关 → 构造缺陷非尺寸问题。STEP models/E7_cylboss_endcorner.step，读回边号 #6（#7 亦假绿；#8 r4 NotDone）。",
+  "case_id": "E7-cylboss-endcap-s4",
+  "input": { "builder": "step", "path": "agent/cases/models/E7_cylboss_endcorner.step", "radius": 4.0, "edges": "6" },
+  "agent_run": { "case": "step:agent/cases/models/E7_cylboss_endcorner.step", "radius": 4.0, "edges": "6" },
+  "labels": { "convexity": "convex", "topo": "single-edge-curved-end", "radius": "constant", "regime": "false-green" },
+  "ground_truth": {
+    "true_chain": ["S4", "S6"],
+    "entities": [],
+    "entities_human": "缺陷面 F1/F5 是结果 shape 的 run-scoped 号（端盖小面 F5 area=11 + 主面 F1），不做跨运行 GT token；端局部性（d_end=0.000）是机制证据。",
+    "expected_evidence": "IsDone=true + check_valid invalid（NotClosed/Unorientable/SelfIntersectingWire）；falsegreen_probe：自由端存在 + 全部缺陷面端局部（d_end≤0.1 且 <d_mid）→ fg_endcap fired；支撑面全解析 → S2 排除；自交端局部 → S3 排除",
+    "aligned_fix": "改边选/延长被圆角边使 blend 不终止在 boss 曲面上（端盖构造问题；半径无关——r=2~5.9 全假绿，降半径无效）",
+    "failure_class": null,
+    "_failure_class_note": "假绿签名不用四态（S2-NotDone 细分不适用）；scorer 该维 None 不参与。"
+  }
+}

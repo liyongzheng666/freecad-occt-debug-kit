@@ -175,6 +175,160 @@ def _run_discriminator(case, radius, cand, out, sink, verbose, edges=None):
     return "untestable", f"未知判别工具 {tool}"
 
 
+# ---- 假绿（IsDone=true 但 invalid）决策空间②：falsegreen_probe 判别量 → 纯裁定 -----
+
+_FG_PARAMETRIC = {"BSplineSurface", "BezierSurface", "SurfaceOfRevolution", "SurfaceOfExtrusion"}
+_FG_END_EPS = 0.1               # 端局部判据：E7 端盖缺陷 d_end=0.000 / E4 F11 d_end=14.0 / E8 ~1.9
+
+
+def _fg_end_local(loc: dict) -> bool:
+    """一条 defect_locality 记录是否"端局部"（落在自由端盖上）。"""
+    d_end, d_mid = loc.get("d_end"), loc.get("d_mid")
+    if d_end is None:                                  # 无自由端 → 谈不上端局部
+        return False
+    return d_end <= _FG_END_EPS and (d_mid is None or d_end < d_mid)
+
+
+def _fg_support_verdict(fg: dict) -> tuple[str, str]:
+    """S2-bsurf 候选：blend 边支撑面含参数面（B-spline/Bezier/回转/拉伸）→ fired。"""
+    hit = sorted(set(fg.get("support_types", [])) & _FG_PARAMETRIC)
+    if hit:
+        return "fired", f"blend 边支撑面含参数面 {hit}（bsurf 族：偏移有界/延伸受限，blend 面构造易写坏几何）"
+    return "ruled_out", f"支撑面全解析（{fg.get('support_types', [])}）→ 排除 B-surface 构造病根"
+
+
+def _fg_selfint_verdict(fg: dict, selfint_fids: list[str]) -> tuple[str, str]:
+    """S3 候选：存在**非端局部**的自交缺陷（带-带中段交叠）→ fired；全端局部 → 归端盖（S4）。"""
+    if not selfint_fids:
+        return "ruled_out", "无自交缺陷 → 排除带-带交叠"
+    loc = {l.get("fid"): l for l in fg.get("defect_locality", [])}
+    mid_span = [f for f in selfint_fids if not _fg_end_local(loc.get(f, {}))]
+    if mid_span:
+        return "fired", f"自交缺陷 {mid_span} 非端局部（中段带-带交叠型）"
+    return "ruled_out", f"自交缺陷 {selfint_fids} 全部端局部 → 属端盖构造（S4），非中段交叠"
+
+
+def _fg_endcap_verdict(fg: dict) -> tuple[str, str]:
+    """S4 候选：有自由端 且 存在端局部缺陷面 → fired。
+
+    自由端前置：全边/闭链 blend 无自由端 → 端盖机器（PerformIntersectionAtEnd）不参与
+    → ruled_out（thinplate 全边 blend 借此安全排除，不误抢 S3 的中段自交）。
+    """
+    if not fg.get("free_ends"):
+        return "ruled_out", "blend 边集无自由端（全边/闭链）→ 端盖机器不参与"
+    bad = [l for l in fg.get("defect_locality", []) if _fg_end_local(l)]
+    if bad:
+        detail = "; ".join(f"{l['fid']}(d_end={l['d_end']})" for l in bad)
+        return "fired", f"缺陷面精确落在自由端盖：{detail}（端盖构造写坏几何）"
+    return "ruled_out", "缺陷面均不在自由端附近（d_end>阈值）→ 排除端盖构造"
+
+
+def _falsegreen_fallback_hyp(run, v) -> CausalHypothesis:
+    """假绿兜底假设 = 决策空间②之前的原启发式，**逐字段一致**（thinplate/E4 回归保护）。"""
+    cats = sorted({d.get("category", "?") for d in v.invalid_subshapes})
+    self_x = len(v.self_intersections)
+    stage = Stage.S3_SSI if self_x else Stage.S6_VALID
+    return CausalHypothesis(
+        stage=stage, chain=[stage],
+        cause=(f"代理奖励陷阱：fillet『完成』(is_done=True) 但 check_valid 判无效——"
+               f"缺陷类别 {cats}，自交 {self_x} 处。裸 IsDone 会把它误判为成功。"),
+        entities=[d.get("ref", {}).get("face_id") or d.get("ref", {}).get("edge_id")
+                  for d in v.invalid_subshapes if d.get("ref")],
+        localization_depth="entity" if self_x else "stage",
+        evidence=[Evidence(f"check_valid: invalid（{cats}, selfX={self_x}）",
+                           artifact_id=run.bad_shape, source="agent/tools/check_valid.py")],
+        confidence=0.65,
+    )
+
+
+def _diagnose_false_green(case, radius, run, v, sink, verbose, policy="rule", traj=None, edges=None) -> Conclusion:
+    """假绿路径的决策表诊断（决策空间②）：falsegreen_probe 一次采集 → policy.decide 逐候选。
+
+    无签名/probe 失败/全候选未命中 → 兜底 `_falsegreen_fallback_hyp`（原启发式逐位一致）。
+    命中 → root=最 distal fired，chain=[root, S6]（S6=检出点），confidence/depth/entities
+    与兜底同构（0.65 / self_x→entity / 缺陷 refs），保证打分维度对旧 case 逐位不变。
+    """
+    node = query_playbook({"exception": "", "phase": "false_green", "is_done": run.is_done})
+    if node is None:
+        return Conclusion(hypotheses=[_falsegreen_fallback_hyp(run, v)])
+    _log(verbose, f"playbook 命中 {node['id']}（假绿决策空间），policy={policy} 逐候选判别")
+
+    selfint_fids = sorted({d.get("ref", {}).get("face_id") for d in v.self_intersections
+                           if d.get("ref", {}).get("face_id")})
+    all_fids = sorted({d.get("ref", {}).get("face_id") for d in (v.invalid_subshapes + v.self_intersections)
+                       if d.get("ref", {}).get("face_id")})
+    fg = None
+    try:
+        from agent.tools.falsegreen_probe import falsegreen_probe
+        fg = falsegreen_probe(case, edges=edges, result_brep=run.bad_shape, face_ids=all_fids)
+        sink.append(ToolResult(
+            tool="falsegreen_probe", ok=True,
+            summary=(f"support={fg['support_types']} free_ends={len(fg['free_ends'])} "
+                     f"defects_localized={len(fg['defect_locality'])}"),
+            payload=fg, artifact_id=run.bad_shape, source="agent/tools/falsegreen_probe.py"))
+        _log(verbose, f"falsegreen_probe → support={fg['support_types']} free_ends={len(fg['free_ends'])}")
+    except Exception as e:                              # noqa: BLE001 — probe 失败照实 untestable
+        _log(verbose, f"falsegreen_probe 失败（{type(e).__name__}: {e}）→ 候选全 untestable")
+
+    def _run_fg(cand):
+        tool = cand.get("localize", {}).get("tool")
+        if fg is None:
+            return "untestable", "falsegreen_probe 不可用（缺 FreeCADCmd/harness 失败）"
+        if tool == "fg_support_probe":
+            return _fg_support_verdict(fg)
+        if tool == "fg_selfint_mid":
+            return _fg_selfint_verdict(fg, selfint_fids)
+        if tool == "fg_endcap_probe":
+            return _fg_endcap_verdict(fg)
+        return "untestable", f"未知假绿判别工具 {tool}"
+
+    decide = _POLICIES[policy]
+    verdicts = []
+    state = {"node": node, "verdicts": verdicts, "run_end": run}
+    while True:
+        action = decide(state)
+        if traj is not None:
+            traj.append({"t": "decide", "policy": policy,
+                         "action": "conclude" if action.get("conclude") else action["run"]["stage"]})
+        if action.get("conclude"):
+            break
+        cand = action["run"]
+        status, ev = _run_fg(cand)
+        verdicts.append((cand, status, ev))
+        if traj is not None:
+            traj.append({"t": "verdict", "stage": cand["stage"],
+                         "tool": cand.get("localize", {}).get("tool"), "status": status, "evidence": ev})
+        _log(verbose, f"  候选 {cand['stage']} [{cand.get('localize', {}).get('tool')}] → {status}: {ev}")
+
+    fired = [(c, ev) for (c, st, ev) in verdicts if st == "fired"]
+    if not fired:                                       # 全排除/未测 → 兜底原启发式（逐位一致）
+        hyp = _falsegreen_fallback_hyp(run, v)
+        summ = "；".join(f"{c['stage']}={st}" for c, st, _ in verdicts)
+        hyp.evidence.append(Evidence(f"假绿决策空间：候选均未命中（{summ}）→ 兜底启发式",
+                                     source="agent/loop/investigate.py"))
+        return Conclusion(hypotheses=[hyp])
+
+    cand, ev = fired[0]                                 # distal→proximate 序，最 distal 命中者为根
+    root = Stage(cand["stage"])
+    self_x = len(v.self_intersections)
+    cats = sorted({d.get("category", "?") for d in v.invalid_subshapes})
+    evidence = _verdicts_to_evidence(node, run, radius, verdicts)
+    evidence.append(Evidence(f"check_valid: invalid（{cats}, selfX={self_x}）",
+                             artifact_id=run.bad_shape, source="agent/tools/check_valid.py"))
+    cf = cand.get("counterfactual", {})
+    return Conclusion(hypotheses=[CausalHypothesis(
+        stage=root, chain=[root, Stage.S6_VALID],
+        cause=(f"代理奖励陷阱：fillet『完成』(is_done=True) 但 check_valid 判无效。"
+               f"根因细分【{cand['stage']}】：{cand['cause']}（{ev}）"),
+        entities=[d.get("ref", {}).get("face_id") or d.get("ref", {}).get("edge_id")
+                  for d in v.invalid_subshapes if d.get("ref")],
+        localization_depth="entity" if self_x else "stage",
+        confidence=0.65,
+        counterfactual=cf.get("fix"),
+        evidence=evidence,
+    )])
+
+
 def _vertex_verdict(report: list[dict]) -> tuple[str, str]:
     """vertex_report → S4 候选裁定（纯函数，可离线单测，与 _ssi_verdict 同模式）。
 
@@ -543,22 +697,10 @@ def _investigate_loop(case, radius, out, sink, verbose, policy="rule", traj=None
                 abstained=True,
                 abstain_reason=f"r={radius} 未复现失败：reproduce 跑完且 check_valid 判有效，无缺陷可归因。",
             )
-        # 假绿：IsDone=true 但几何无效
-        cats = sorted({d.get("category", "?") for d in v.invalid_subshapes})
-        self_x = len(v.self_intersections)
-        stage = Stage.S3_SSI if self_x else Stage.S6_VALID
-        hyp = CausalHypothesis(
-            stage=stage, chain=[stage],
-            cause=(f"代理奖励陷阱：fillet『完成』(is_done=True) 但 check_valid 判无效——"
-                   f"缺陷类别 {cats}，自交 {self_x} 处。裸 IsDone 会把它误判为成功。"),
-            entities=[d.get("ref", {}).get("face_id") or d.get("ref", {}).get("edge_id")
-                      for d in v.invalid_subshapes if d.get("ref")],
-            localization_depth="entity" if self_x else "stage",
-            evidence=[Evidence(f"check_valid: invalid（{cats}, selfX={self_x}）",
-                               artifact_id=run.bad_shape, source="agent/tools/check_valid.py")],
-            confidence=0.65,
-        )
-        return Conclusion(hypotheses=[hyp])
+        # 假绿：IsDone=true 但几何无效 → 决策空间②（playbook fillet-falsegreen-invalid）
+        # 细分 S2(bsurf 支撑)/S3(中段自交)/S4(端盖构造)；无签名/probe 失败/全未命中 →
+        # 兜底 _falsegreen_fallback_hyp（原启发式逐位一致，thinplate/E4 回归保护）。
+        return _diagnose_false_green(case, radius, run, v, sink, verbose, policy, traj, edges=edges)
 
     # —— 分支 C：基础设施/harness 级失败 ——
     return Conclusion(

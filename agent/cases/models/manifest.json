@@ -60,6 +60,26 @@
       "failure_mode": "thin wedge ridge NotDone r>=5. TAPER-INSENSITIVE (0.2 vs 0.05 identical) => thickness(4)-dominated overflow, NOT a clean near-tangent",
       "agent_coverage_gap": "wedge-topology (non-orthogonal) single-edge overflow variant → face_overflow",
       "verified_fillet": {"is_done": false, "is_valid": false, "n_faces": 0, "exception": "OCCError: StdFail_NotDone"}
+    },
+    {
+      "model_id": "E7_cylboss_endcorner", "step": "E7_cylboss_endcorner.step",
+      "n_edges": 18, "target_edges_1based": [6], "radius": 4.0,
+      "parasolid_ref": "curved end-corner (PerformIntersectionAtEnd territory); Parasolid 77.3.5 overlap_edge / end-cap family",
+      "failure_mode": "FALSE-GREEN at ALL r=2/4/5/5.9: fillet segment terminates ON the cylindrical boss; end-cap construction writes NotClosed/Unorientable/SelfIntersectingWire silently. Defect locality PROVEN: F1/F5 d_end=0.000 (exactly at the free end).",
+      "agent_coverage_gap": "S4 root via false-green (decision-space②: fg_endcap_probe fired). First real S4-root case.",
+      "case_json": "cases/E7-cylboss-endcap-s4.json",
+      "verified_fillet": {"is_done": true, "is_valid": false, "n_faces": 8, "exception": null},
+      "verified_variants": {"edge#7 r4": "false-green too", "edge#8 r4": "NotDone"}
+    },
+    {
+      "model_id": "E8_loft_bspline", "step": "E8_loft_bspline.step",
+      "n_edges": 15, "target_edges_1based": [3], "radius": 3.0,
+      "parasolid_ref": "77.3.1 bsurf_c (B-surface offsets bounded / extension limited)",
+      "failure_mode": "FALSE-GREEN at ALL r=1/3/5: blend along BSplineSurface x Plane edge produces self-intersecting (x2) + Unorientable faces, IsDone=true. Radius-independent.",
+      "agent_coverage_gap": "S2-bsurf root via false-green (fg_support_probe fired). First real B-surface (G4) case.",
+      "case_json": "cases/E8-loft-bsurf-s2.json",
+      "verified_fillet": {"is_done": true, "is_valid": false, "n_faces": 10, "exception": null},
+      "verified_variants": {"edge#13 r3": "false-green too", "edges#7/#10/#15 r3": "valid"}
     }
   ]
 }
