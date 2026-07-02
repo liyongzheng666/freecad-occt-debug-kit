@@ -248,8 +248,8 @@ python -m agent.tools.test_reproduce          # ALL PASS
 ```
 
 ### 尚未做（留后续，均有 fixture 就位）
-- **P1.3** triage_input 补凹/凸·短边·容差·输入 BRepCheck（免埋点）。
-- **P2.2** S4 顶点复杂度（需造 4 边顶点 case + vertex_probe）。
+- ~~P1.3 triage_input 补齐~~ ✅ **已收口（2026-07-02②）**：凹凸（角占率探针，方向无关）/短边/sliver/容差离群四字段落地（`test_triage_input` 21 断言）；只报告不进判别，eval 质量维逐位不变。
+- ~~P2.2 S4 顶点复杂度~~ 🟡 **判别器落地 + 现场诚实负结果（2026-07-02②）**：`vertex_probe`+playbook S4 候选投产；但 8 族简单构型未获 S4-proximate NotDone——**含 Parasolid §77.2.1 明文禁止的金字塔 apex 2-of-4 构型，OCCT 全收敛**（本表 3.1 `vertex_c` 行的 OCCT 侧映射需修正：OCCT 顶点收敛强于 Parasolid 声明约束）；双边 box LLDB 实测死于 StartSol:944（S2）非 PerformOneCorner。不造假 GT，S4 正例留待复杂/导入几何。
 - **P2.3** loop 溢出细分（face_overflow 已含，可再分 loop vs neighbour）。
 - **P3.x** B-surface 支撑面 / chamfer / 变半径 / 深埋点。
 - ~~G8 WP5 OCCT 埋点固化~~ ✅ 已解决：改动已在 fork `v7_8_1-fillet-debug` 历史（`c07ae703b7`）且已推送。

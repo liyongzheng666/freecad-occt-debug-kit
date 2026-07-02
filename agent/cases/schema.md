@@ -45,6 +45,6 @@ case 文件里的 `ground_truth` 块（多由 instrumented truth run 产出；�
 | case_id | 难度层 | 近端阶段 | 远端根因 |
 | --- | --- | --- | --- |
 | near-tangent-faces | 凹/单边/定/clean | S3 | S0 近切 → S3 |
-| vertex-3corner | 凸/顶点/定/clean | S4 | S4 corner |
+| vertex-3corner | 凸/顶点/定/clean | S4 | S4 corner ⚠ 未实现——P2.2（2026-07-02②）8 族构型狩猎未获 S4-proximate 现场（OCCT 顶点收敛强于 Parasolid 约束，诚实负结果，见 `loop/test_investigate_vertex.py` 文档）|
 | short-edge | 凹/单边/定/clean | S1 | S0/S1 短边 |
 | box-concave-r-large | 凹/单边/定/clean | S3 | S2 球塞不进 |

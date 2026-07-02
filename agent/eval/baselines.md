@@ -124,3 +124,23 @@
 **质量维与 rule 逐位持平**（定位 0.90 / 失效分类 1.00 / abstention 0.50 / false_commit 0）。关键发现：**决策录制按 state 签名（playbook 节点+已跑候选裁定）键控、非按 case**——新 4 case 走相同决策轨迹（同节点、同候选序）直接命中已录签名，**零重录零计费跑通**。差异仅 wall_s（新 STEP case 读盘+冷启动略慢）与个别 tool-call ±1（capture 条件路径，决策后合成，非决策层差）。
 
 > 复现：`bash agent/eval/eval.sh`（rule）；`AGENT_DECIDE_BACKEND=replay AGENT_DECIDE_RECORD=$PWD/agent/eval/llm_decisions bash agent/eval/eval.sh --policy llm`（LLM 离线；首跑冷启动可 >2min）。
+
+---
+
+## 2026-07-02② 更新：路径 A 免埋点广度收尾（P1.3 + P2.2）
+
+> 变更：① **P1.3** triage 四字段落地（convexity 角占率探针 / short_edges / sliver_faces / tolerance_outliers）——**只报告不进判别**，判别量（min_dihedral/curv）逐位不变；② **P2.2** playbook 加 **S4 顶点候选**（`vertex_probe`，Parasolid vertex_c 构型判据）→ 每个 playbook 路径 case **tool-call +1**（S4 判别真跑，box 全边/邻边构型均 ruled_out）。
+
+### 质量维回归（11 case，rule 臂）
+
+**全部质量维与 2026-07-02① 逐位一致**：定位全集 0.90 / 失效分类 1.00 / abstention 0.50 / false_commit 0 / box-r5 0.70。唯一漂移是登记过的 tool-call：全集均值 6.09→**6.64**（playbook 路径 +1：E2/E3/E5/pocket 8→9、box-r5 9→10、wedge-sliver 10→11；wedge-thin 仍 9——triage harness 无 `wedge-thin` builder → vertex_probe 诚实 untestable 不发工具，预先存在的 builder 不对称，非回归）。
+
+### S4 现场狩猎——诚实负结果（P2.2 Step3）
+
+**8 族简单解析构型未获 S4-proximate NotDone**：box 邻边对（3 种共享面变体；r<10 全成，r≥10 死于 **S2 `StartSol` Builder_2.cxx:944**——LLDB 实测，非 corner）、cube 邻边对（≤9.5 全成）、**金字塔 apex 2-of-4（邻/对——Parasolid §77.2.1 明文禁止的 vertex_c 构型，OCCT 全部收敛！）**、L 型凹凸混合 two-corner、薄板短第三边 corner、凹 notch 2-of-3 凹边（全成）。WP2 记录的 `PerformOneCorner Builder_C1:999` anchor 未复现（确切几何失传）。**不造假 GT case**；S4 eval 层留空待真实构型。正向能力发现：OCCT 顶点收敛比 Parasolid 声明的约束更能打。详见 `loop/test_investigate_vertex.py` 文档。
+
+### LLM replay 臂语义漂移（诚实标注，待重录）
+
+playbook 节点加 S4 候选后，llm replay 忠实重放**旧轨迹**：录制的 conclude 决策在 3 候选后触发（state 签名按已跑裁定匹配、命中旧录制）→ **llm replay 臂不跑 S4 判别**（box-r5 llm tool=8 vs rule 10），质量维仍逐位一致（S4 本会 ruled_out，不影响结论）。**重录**（`claude_cli`，有计费）可消除该语义差；在重录前 A/B 的 tool-call 维不可比，质量维可比。
+
+> 复现：`bash agent/eval/eval.sh`；测试 `python -m agent.loop.test_investigate_vertex`（含纯函数 + box 回归断言）。

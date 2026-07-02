@@ -9,7 +9,7 @@
 
 ## 进度快照（最近更新 2026-07-02）
 
-**已投产（真跑 + 自测，16 个 test 模块全绿：scorer / session / check_valid / reproduce / **reproduce_crash** / ssi_probe / playbook / triage_input / capture / decide_llm / trajectory / review / investigate_ssi / investigate_cf / **investigate_overflow** / g26_realmodel）**：
+**已投产（真跑 + 自测，17 个 test 模块全绿：scorer / session / check_valid / reproduce / reproduce_crash / ssi_probe / playbook / triage_input / capture / decide_llm / trajectory / review / investigate_ssi / investigate_cf / investigate_overflow / **investigate_vertex** / g26_realmodel）**：
 
 - **工具层**：`reproduce`(FreeCADCmd, real+replay，**信号退出归 `kernel_crash`**——P1.1/G28) · `check_valid`(occ-debug-mesh BRepCheck) · `ssi_probe`(面面求交→S3签名) · `capture`(LLDB 活几何→BREP) · `triage_input`(近切+凹曲率判别) · `playbook`(决策表)。
 - **回路 ★里程碑1**：`loop/investigate.py` 决策表驱动 v0——observe(`reproduce`) → **`decide(state)` 接缝**逐候选判别(check_valid_input / radius_probe / ssi_probe) → **失效三态分类** → 对症反事实 → `emit_conclusion`。决策走 policy 接缝（`decide_rule` / `decide_llm` 同签名 A/B），模型只在此点、其余确定性。
@@ -19,11 +19,12 @@
 - **eval ★里程碑2**：`eval/eval.sh`→`runner.py` 一条命令真跑全集 → `scorer` 五维打分（定位 / **失效分类** / 机制\* / 反事实\* / 校准）+ **弃权四态裁定（abstention precision / false_commit，与定位分账）** + tool-call 成本 + wall-clock，**分层报**；基线登记 `baselines.md`（**2026-07-02，11 case**：四态全中（失效分类 1.00）、**定位全集 0.90**（face_overflow 层 1.00×2 / algorithmic_overflow 0.90×3 / geometric 两态 1.00×3 / box-r5 0.70 不回归）、abstention precision 0.50、false_commit=0；**LLM replay 臂 11 case 质量维逐位持平**——新 case 决策轨迹命中已录签名，无需重录）。机制\*/反事实\* 为代理/携带，真分待 truth-run/OCCT（A8）。runner 已接 `agent_run.edges`（原漏传，step case 指定边必需）。
 - **真值 GT（11 case = 7 合成 + 4 真实 STEP，P0.1 新增）**：原 7 个——三态 `cases/box-r5.json`（LLDB overflow，S3 现经 WP5 源码插桩真实抓到）·`cases/wedge-sliver.json`（LLDB 近切 1.72°）·`cases/pocket-blind-hole.json`（几何第一性曲率）；区分度 `cases/box-clean.json`（clean 弃权 → 测不幻觉）·`cases/thinplate-false-green.json`（**false-green/代理奖励陷阱**）·`cases/wedge-thin-abstain.json`（**loop 内过度弃权** → wrong_abstain）·`cases/s3-fixture.json`（**合成** S3 fixture）。**新 4 个（真实 STEP 资产，Parasolid Blending 卷例子逐一实跑验证，`cases/models/` + manifest）**：`E2-thinbar-overlap`（最小两带重叠）·`E3-thinplate-face-overflow`（单带盖过 edge loop，Parasolid §77.3.4 loop_c）·`E5-boss-face-overflow`（溢出到 boss，Ch74/Fig74-9；OCCT 内部处理到 r≤~15）·`E4-groove-false-green`（**真实模型假绿**：凹槽 r=15 IsDone=true 但 invalid，BRepCheck 拦住）。
 - **失效四态（P2.1 从三态扩展，Parasolid Ch74/§77.3.4 对照）**：`algorithmic_overflow`(≥2 边两带重叠，可 SSI 互裁) / **`face_overflow`(单边单带溢出——离开支撑面/盖过 edge loop，无第二条带可裁，新增)** / `geometric_near_tangent` / `geometric_curvature`——investigate 用 triage + **blend 边数二分**判别 → 对症修法 + **实体级定位**（近切边 `edge#0` / 凹曲率面 `face#6`）。修的真 bug：改动前单边 case 被误判 algorithmic_overflow 并谎称"两相邻圆角面重叠"——单条边**不存在**相邻带。overflow 中间面句柄埋匿名 `DStr`、capture 未必救得了，entity 维可能止于 stage（非待兑现的 ~1.00，见 §A4 残留 / WP4②）。
+- **P1.3+P2.2（路径 A 免埋点广度收尾，2026-07-02②）**：triage 四字段收口（凹凸=角占率探针/短边/sliver/容差离群，只报告不进判别）+ **S4 顶点判别器投产**（`vertex_probe`+`_vertex_verdict`+playbook 第 4 候选，每 playbook case 真跑 tool+1，质量维逐位不变）；**S4 现场诚实负结果**：8 族简单构型未获 S4-proximate（Parasolid 禁止的金字塔 apex 2-of-4 构型 OCCT 全收敛——正向能力发现），不造假 GT。LLM replay 忠实重放旧轨迹（不跑 S4），质量维一致、tool 维待重录后可比（见 baselines 2026-07-02②）。
 - **可视 demo**：`demo/convex_concave/`（凸/凹/可裁剪/几何不可能 四态对照 + `DISPLAY_RULES.md` 显示约束）。
 
 **铁律落地**：全程禁用裸 `IsDone()`，成功判据 = `check_valid` 几何有效性。
 
-**下一站（候选，新窗口接手）**：① **P1.3 triage_input 补全**（凹凸/短边/sliver/容差/输入 BRepCheck——免埋点，fixture 就位）；② **P2.2 S4 顶点复杂度**（造 4 边顶点 case + vertex_probe，Parasolid `vertex_c`/`edge_c` 对照）；③ **FCStd 直读**（openDocument + Part::Feature）+ 多边 triage 消歧（G26 剩余）；④ **扩"决策空间大"的 case**（多候选/需早停/需领域推理选探针，让 A5 的 LLM 臂显价值——当前决策表 rule 已近最优）；⑤ ~~G8/WP5 埋点固化~~ ✅ **已解决（2026-07-02 核实）**：OCCT env_emit 改动已提交并推送 fork `v7_8_1-fillet-debug`（`c07ae703b7`），bootstrap 可再生。Parasolid 对照的完整补足计划与执行进展见 [../docs/fillet-para-study-and-agent-gap-plan.md](../docs/fillet-para-study-and-agent-gap-plan.md) §4/§5。
+**下一站（候选，新窗口接手）**：① ~~P1.3 triage_input 补全~~ ✅ **已收口（2026-07-02②）**；② ~~P2.2 S4 顶点复杂度~~ 🟡 **判别器已落地、case 诚实负结果（2026-07-02②）**：`vertex_probe` + playbook S4 候选投产（每 playbook case 真跑，tool+1）；但 S4-proximate 现场 8 族简单构型未获（金字塔 apex 2-of-4 等 Parasolid 禁止构型 OCCT 全收敛；双边 box LLDB 实测死于 StartSol:944 非 corner）→ 不造假 GT，S4 eval 正例留待复杂/导入几何；③ **FCStd 直读**（openDocument + Part::Feature）+ 多边 triage 消歧（G26 剩余）；④ **扩"决策空间大"的 case**（多候选/需早停/需领域推理选探针，让 A5 的 LLM 臂显价值——当前决策表 rule 已近最优）；⑤ ~~G8/WP5 埋点固化~~ ✅ **已解决（2026-07-02 核实）**：OCCT env_emit 改动已提交并推送 fork `v7_8_1-fillet-debug`（`c07ae703b7`），bootstrap 可再生。Parasolid 对照的完整补足计划与执行进展见 [../docs/fillet-para-study-and-agent-gap-plan.md](../docs/fillet-para-study-and-agent-gap-plan.md) §4/§5。
 
 ---
 
@@ -72,7 +73,7 @@
 | G17 | **几何有效性 verifier**（BRepCheck + 自交 + G1 + 拓扑增量，替代 `IsDone()`） | 🟡 BRepCheck 级**已实做**（`check_valid` 走 occ-debug-mesh，真几何自测 `tools/test_check_valid.py`，14 个真实 BREP 零误报）；**P1.2 实证缺口比原判窄**：真实模型假绿（`E4-groove-false-green` r=15，IsDone=true）被现有 BRepCheck 直接拦住（1 invalid_subshape），无需 BOP；⏳ 面面自交（BOPAlgo_CheckerSI）+ G1/切向 + 拓扑增量待补 | 🔴 | A2 |
 | G19 | **失效本体 + 症状/阶段适配层**（playbook 骨架） | 🟡 适配层已代码化（symptom→近端阶段节点 + distal 候选 + 判别器映射）；本体多签名待扩 | 🔴 | A2 |
 | G20 | **根因三腿验证**（定位 / 机制 / 反事实，含互斥靶向修法判别） | 方法学已写（见 docs/），未实现 | 🔴 | A3 |
-| G18 | **输入预检 triage（S0 输入质量）**——agent 首发诊断 | 🟡 `triage_input` 已落地近切+凹曲率判别（驱动失效四态分类）；凹凸/短边/容差待补（P1.3） | 🟠 | A2 |
+| G18 | **输入预检 triage（S0 输入质量）**——agent 首发诊断 | ✅ **P1.3 收口（2026-07-02②）**：近切+凹曲率判别（驱动四态）+ 四字段补全——`convexity`（角占率探针：边中点垂直面 16 点小圆 isInside 占率≈材料楔角/360，方向无关；pocket 盲孔底缘=唯一凹边实证）/`short_edges`/`sliver_faces`/`tolerance_outliers`（薄片 fixture 正例）。**只报告不进判别**（判别量逐位不变）。输入 BRepCheck 由既有 check_valid_input 判别器覆盖 | 🟠 | A2 |
 | G5 | **根因 Eval harness**（scorer 按定位/机制/反事实/校准打分 + runner + 回归基线） | ✅ `eval/runner.py` + `eval.sh` 一条命令真跑全集 → `scorer` 五维（加**失效分类**）分层打分，规则版基线登记 `baselines.md`；机制/反事实为代理/携带，真分待 A8 | 🟠 | A4 |
 | G6 | **Case 数据集 + ground truth（四元组）** | 只有 mesher fixtures，无标注缺陷集 | 🟠 | A1 |
 | G21 | **case 分层**（凹/凸 × 单边/链/顶点 × 定/变半径 × clean/overflow） | 无；现有思路是玩具 box | 🟠 | A1 |
@@ -194,7 +195,7 @@ agent/
 补齐：G2、G3、G4、G17、G18、G19。
 
 - [~] `tools/check_valid.py`：**几何有效性判据**——`BRepCheck_Analyzer` + 自交 + G1/切向 + 拓扑增量。**全项目以此为成功判据，禁用裸 `IsDone()`。** 它是 **reward signal + 一等几何活**（自交用 `BOPAlgo_CheckerSI`、G1 单独检测），配自己的测试集，非 wrapper。✅ BRepCheck 级已落地（shell out occ-debug-mesh `<base>.defects.json`，真几何自测）；⏳ 待补：BOPAlgo_CheckerSI 面面自交、G1/切向、拓扑增量。
-- [~] `tools/triage_input.py`：S0 输入预检 + **失效分类判别**。✅ 已落地 `min_dihedral`(近切) + 支撑面凹曲率半径——驱动 investigate 把 S2 失败分成 geometric(近切/曲率) vs algorithmic/face overflow **四态**（P2.1 按 blend 边数二分单带/两带），真测 `test_triage_input.py`；⏳ 凹凸分类/短边/sliver/容差/输入 BRepCheck 待补。
+- [x] `tools/triage_input.py`：S0 输入预检 + **失效分类判别**。✅ `min_dihedral`(近切) + 支撑面凹曲率半径——驱动四态判别（P2.1 边数二分）；✅ **P1.3 四字段补全（2026-07-02②）**：convexity（角占率探针）/short_edges/sliver_faces/tolerance_outliers + `vertex_report`（TRIAGE_EDGES 多边共享顶点构型，P2.2）——只报告不进判别，真测 `test_triage_input.py`（21 断言）。输入 BRepCheck 由 check_valid_input 判别器覆盖。
 - [x] `tools/playbook.py`：`query_playbook(signature)` 检索决策表节点（symptom→节点，子串/全等匹配，单测覆盖）。
 - [x] `playbook/fillet-failures.json`：按 §5 schema 写签名 `fillet-notdone-overflow`（`proximate_stage` + distal→proximate 排序的 `root_cause_candidates` S0/S2/S3 + 互斥 `counterfactual`）。环境无 PyYAML → 表用 JSON，`.yaml` 留作人读 schema。
 - [ ] 工具统一规范：typed I/O、结构化错误、**每次调用落 session**（进 viewer + 进轨迹）、带 timeout。
@@ -328,8 +329,8 @@ A0 ─► A1(分层case+四元组GT+reproduce) ─► A2(工具+有效性判据+
 
 **下一步开工项（不依赖未实现的东西）**：
 
-1. **P1.3 triage_input 补全**（凹凸分类 / 短边 / sliver / 容差 / 输入 BRepCheck——免埋点，fixture 就位）。
-2. **P2.2 S4 顶点复杂度**：造 4 边顶点 / 三边异凸 case（boolean 拼接）+ `vertex_probe`（顶点边数 + 凸性混合），接 `PerformThreeCorner` 症状（Parasolid `vertex_c`/`edge_c` 对照，G29 遗留）。
+1. ~~P1.3 triage_input 补全~~ ✅ **已收口（2026-07-02②）**：四字段全落地（角占率凹凸探针 / 短边 / sliver / 容差离群），21 断言真测；只报告不进判别，eval 质量维逐位不变。
+2. ~~P2.2 S4 顶点复杂度~~ 🟡 **判别器落地 + case 诚实负结果（2026-07-02②）**：`vertex_probe`（TRIAGE_EDGES 共享顶点构型）+ `_vertex_verdict` 纯函数 + playbook S4 第 4 候选投产（`test_investigate_vertex` 19 断言）；**S4-proximate 现场 8 族未获**（含 Parasolid 明文禁止的金字塔 apex 2-of-4——OCCT 全收敛；WP2 的 PerformOneCorner anchor 未复现，今日双边 box 实测 StartSol:944/S2）→ 不造假 GT；后续换复杂曲面/导入模型再猎。
 3. **G26 剩余**：FCStd 直读（openDocument + Part::Feature 遍历 + 多实体消歧）、多边 triage 消歧。
 4. **扩"决策空间大"的 case**：决策表 rule 已近最优、A/B 难拉开；补多候选 / 需早停省成本 / 需领域推理选探针的 case，让 LLM 臂显出价值。
 5. **WP2 长杆仍悬挂**：真实"StartSol 成功后接触曲线退化"型 S3 现场两轮 7 几何族未获（诚实负结果），可把 WP5 的源码插桩技巧搬到 `PerformSurf`/`PerformOneCorner` 试一次。
@@ -338,7 +339,7 @@ A0 ─► A1(分层case+四元组GT+reproduce) ─► A2(工具+有效性判据+
 ### 操作备忘（新窗口接手必读）
 
 - **跑测试 / eval 一律从 repo 根** `python -m agent.xxx`——**别 `cd agent`**，否则 `import agent` 包导入失败（`ModuleNotFoundError: No module named 'agent'`）。
-- **全 test 一把过（16 模块）**：`for m in test_session test_trajectory test_review loop.test_decide_llm loop.test_investigate_ssi loop.test_investigate_cf loop.test_investigate_overflow eval.test_scorer tools.test_{reproduce,reproduce_crash,check_valid,triage_input,playbook,ssi_probe,capture,g26_realmodel}; do python -m agent.$m; done`（FreeCADCmd/LLDB 不在则相关项 SKIP，不算错）。
+- **全 test 一把过（17 模块）**：`for m in test_session test_trajectory test_review loop.test_decide_llm loop.test_investigate_ssi loop.test_investigate_cf loop.test_investigate_overflow loop.test_investigate_vertex eval.test_scorer tools.test_{reproduce,reproduce_crash,check_valid,triage_input,playbook,ssi_probe,capture,g26_realmodel}; do python -m agent.$m; done`（FreeCADCmd/LLDB 不在则相关项 SKIP，不算错）。
 - **eval 跑法**：`bash agent/eval/eval.sh`（rule）；LLM 离线零计费复现 `AGENT_DECIDE_BACKEND=replay AGENT_DECIDE_RECORD=$PWD/agent/eval/llm_decisions bash agent/eval/eval.sh --policy llm`；重录真决策＝去掉 `AGENT_DECIDE_BACKEND=replay`（走 `claude_cli`，需 Claude Code 鉴权、产生计费）。
 - **改动未提交**（按约定 commit 等显式指示）；交接先 `git status` 看改动面。改工具契约 / case schema / eval 维度 / 失效本体，先更对应真源文档（本文件 / `playbook/blend-failure-ontology.md` / `docs/root-cause-verification.md`）。
 - **本文件即索引**：真实模型诊断输入看 §8(G26)；A/B 完整数据 + 复现命令看 `eval/baselines.md`；当前 11 case GT 看 `cases/*.json`（真实 STEP 资产在 `cases/models/`）。
