@@ -240,6 +240,11 @@ bash agent/eval/eval.sh          # 7 case：全集定位 0.82 / 失效分类 1.0
 - **诚实边界**：OCCT 圆角自然崩溃**非隔离可复现**（同进程累积假象），故用**合成信号退出**验收，不碰运气触发真崩溃。
 - **复现**：`python -m agent.tools.test_reproduce_crash` → **ALL PASS**（rc=-11/139→kernel_crash，rc=1→harness）。
 
+### ✅ 决策空间② + 曲面猎场（2026-07-02③，G1/G4 假绿侧开张）
+- **曲面族狩猎**：torus 独立缝边不可圆（no suitable edges）/cylcross、cylnotch、loft 侧棱全收敛——但 **cylboss 端终止**（E7）与 **loft BSpline 顶圆**（E8）= 半径无关稳定假绿。
+- **假绿决策空间**：playbook 签名② 三候选（S2-bsurf/S3-中段自交/S4-端盖）+ `falsegreen_probe`（支撑面类型/缺陷端局部性/自由端）。本表 3.2 `bsurf_c` 行与 3.1 `vertex_c` 行由此获得**假绿形态**的首个真实覆盖（NotDone 形态仍未获）。
+- **复现**：`python -m agent.loop.test_investigate_falsegreen`；`bash agent/eval/eval.sh`（13 case 定位 0.92）。
+
 ### 回归
 ```bash
 python -m agent.loop.test_investigate_cf      # ALL PASS

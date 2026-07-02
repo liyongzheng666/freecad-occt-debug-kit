@@ -144,3 +144,26 @@
 playbook 节点加 S4 候选后，llm replay 忠实重放**旧轨迹**：录制的 conclude 决策在 3 候选后触发（state 签名按已跑裁定匹配、命中旧录制）→ **llm replay 臂不跑 S4 判别**（box-r5 llm tool=8 vs rule 10），质量维仍逐位一致（S4 本会 ruled_out，不影响结论）。**重录**（`claude_cli`，有计费）可消除该语义差；在重录前 A/B 的 tool-call 维不可比，质量维可比。
 
 > 复现：`bash agent/eval/eval.sh`；测试 `python -m agent.loop.test_investigate_vertex`（含纯函数 + box 回归断言）。
+
+---
+
+## 2026-07-02③ 更新：曲面猎场 + 假绿决策空间②（13 case，定位 0.92）
+
+> 变更：曲面几何族狩猎（torus/cylcross/loft/cylboss/cylnotch）产出两个**半径无关稳定假绿**真实 case；假绿分支从**零决策硬启发式**（self-int→S3 否则 S6）升级为 playbook 签名② `fillet-falsegreen-invalid` 三候选判别（与 NotDone 签名共用 `decide(state)` 接缝——**决策空间：签名 ×2、假绿分支 0→3 候选**）。判别量 `falsegreen_probe`（一次 FreeCADCmd）：支撑面类型 + 缺陷端局部性 + 自由端。
+
+### 新增 case（首个 S4 根因 + 首个 B-surface/G4 case）
+
+| case | 几何 | GT 链 | 判别 | 定位 |
+| --- | --- | --- | --- | --- |
+| **E7-cylboss-endcap-s4** | box+圆柱 boss 骑跨顶边，fillet 自由端终止在 boss 曲面 | **[S4,S6]** | fg_endcap fired（缺陷 F1/F5 **d_end=0.000**，r=2~5.9 全假绿=半径无关） | **1.00** |
+| **E8-loft-bsurf-s2** | 方转圆 loft，fillet BSpline×Plane 顶圆边 | **[S2,S6]** | fg_support fired（BSplineSurface 支撑；r=1/3/5 全假绿） | **1.00** |
+
+### 回归核对（13 case，rule 臂）
+
+全集定位 0.90→**0.92**（新 case 纯增量）；失效分类 1.00 / false_commit 0 / abstention 0.50 不变。旧 case 质量维逐位不变——**关键回归设计**：① thinplate（全边 blend 无自由端 → S4 候选 ruled_out；中段自交 → S3 fired，root/conf/depth 与旧一致）；② E4（支撑解析 + F11 d_end=14.0 远端 + 无自交 → 全候选 ruled_out → 兜底=原启发式逐字段一致，root S6）。登记漂移：假绿路径 tool 2→**3**（+falsegreen_probe 一次）；thinplate 反事实\* 0.00→**n/a** 是**按设计的改进**（新路径携带对症修法 → 该维诚实不打分，此前缺失被罚 0；scorer 语义 `None if carried else MISS`）。
+
+### 决策空间账本（A5 残留的正面回应）
+
+此前：1 签名 4 候选、rule 顺序穷尽近最优 → LLM 臂无从显价值。现在：**2 签名 7 候选、两条判别通路**（NotDone：S0/S2/S3/S4；假绿：S2/S3/S4），假绿判别有真实的早停/择序空间（fg_support 便宜、fg_endcap 依赖 locality 计算）。⚠ **LLM replay 对新签名无录制**：`--policy llm` replay 遇 E7/E8/thinplate/E4（假绿路径）将 FileNotFoundError → runner 记 SKIP（诚实，不假绿）；显 LLM 价值需用 claude_cli 重录（计费，待定）。
+
+> 复现：`bash agent/eval/eval.sh`；`python -m agent.loop.test_investigate_falsegreen`（21 断言：纯裁定 + 四锚点端到端 + 回归量）。
