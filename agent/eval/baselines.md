@@ -93,3 +93,34 @@
 > 复现:`bash agent/eval/eval.sh`（rule）；`AGENT_DECIDE_BACKEND=replay AGENT_DECIDE_RECORD=agent/eval/llm_decisions bash agent/eval/eval.sh --policy llm`（LLM，离线零计费）。重录真决策:去掉 `AGENT_DECIDE_BACKEND=replay`（走 claude_cli，需 Claude Code 鉴权）。
 >
 > 难度分层将随 case 扩充加维（凹/凸 × 单边/链/顶点 × 定/变半径，G21）。当前按 failure_class + clean + 其它分层。
+
+---
+
+## 2026-07-02 更新：Parasolid 对照第一轮（P0.1/P1.1/P1.2/P2.1，11 case + 失效四态）
+
+> 变更：① **+4 真实 STEP case**（`E2-thinbar-overlap`/`E3-thinplate-face-overflow`/`E5-boss-face-overflow`/`E4-groove-false-green`，资产 `cases/models/`，Parasolid Blending 卷例子逐一隔离实跑验证）；② **失效三态 → 四态**：新增 `face_overflow`（单边单带溢出，`_classify_s2_failure` 按 blend 边数二分——修掉"单边 case 谎称两相邻带重叠"的假机制）；③ runner 接 `agent_run.edges`（原漏传）；④ reproduce 信号退出归 `kernel_crash`（不动 eval 数字）。来源与执行细节见 `../../docs/fillet-para-study-and-agent-gap-plan.md` §5。
+
+### rule 臂（11 case）
+
+| 层 | n | 定位 | 失效分类 | 机制* | 反事实* | 校准 | 平均 tool-call | 平均 wall_s |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| clean/abstain | 1 | n/a | n/a | n/a | n/a | n/a | 2.0 | ~0.3 |
+| algorithmic_overflow | **3** | **0.90** | 1.00 | 0.20 | 携带 | 0.72 | 6.0 | ~1.4 |
+| **face_overflow（新层）** | **2** | **1.00** | **1.00** | 0.20 | 携带 | 0.70 | 8.0 | ~1.8 |
+| geometric_curvature | 1 | 1.00 | 1.00 | 0.50 | 携带 | 0.70 | 8.0 | ~1.8 |
+| geometric_near_tangent | 2 | 1.00¹ | 1.00 | 0.50 | 携带 | 0.70 | 9.5 | ~4.7 |
+| 其它(无三态类)·false-green | **2** | **0.70²** | n/a | 0.35 | 0.00 | 0.70 | 2.0 | ~0.3 |
+| **全集** | **11** | **0.90** | **1.00** | 0.30 | — | **0.71** | 6.09 | ~1.8 |
+
+¹ 同前：均值只算承诺 case（wedge-sliver 1.00），wedge-thin-abstain 弃权分账。
+² false-green 层现 n=2：**真实模型 `E4-groove-false-green` 1.00**（凹槽 r=15，IsDone=true 但 BRepCheck 1 invalid_subshape → 根 S6 全中，无需 BOP）+ 合成 `thinplate-false-green` 0.40（症状-only，未回溯 S2 根，已知未解）。
+
+**弃权/校准（集合量）**：correct_abstain=1 / wrong_abstain=1 / correct_commit=9 / **false_commit=0**；abstention precision=0.50（同前，wedge-thin 探针分辨率极限未动）。
+
+**回归核对**：原 7 case 各维逐位不变（box-r5 定位 0.70、s3-fixture 1.00、thinplate 0.40 …）——新增 case 纯增量，无既有 case 漂移。
+
+### LLM replay 臂（11 case，零重录）
+
+**质量维与 rule 逐位持平**（定位 0.90 / 失效分类 1.00 / abstention 0.50 / false_commit 0）。关键发现：**决策录制按 state 签名（playbook 节点+已跑候选裁定）键控、非按 case**——新 4 case 走相同决策轨迹（同节点、同候选序）直接命中已录签名，**零重录零计费跑通**。差异仅 wall_s（新 STEP case 读盘+冷启动略慢）与个别 tool-call ±1（capture 条件路径，决策后合成，非决策层差）。
+
+> 复现：`bash agent/eval/eval.sh`（rule）；`AGENT_DECIDE_BACKEND=replay AGENT_DECIDE_RECORD=$PWD/agent/eval/llm_decisions bash agent/eval/eval.sh --policy llm`（LLM 离线；首跑冷启动可 >2min）。

@@ -35,9 +35,10 @@ case 文件里的 `ground_truth` 块（多由 instrumented truth run 产出；�
 > **因果链已转正**（缺口1）：`true_chain` 为 distal→proximate（如 S0 近切 → 诱发 S3 求交失败）；
 > 单阶段则单元素 `["S3"]`。`aligned_fix` 与**根**（`true_chain[0]`）对齐。
 > scorer 对链给部分得分（命中根=满分，只命中症状=部分分；见 `contracts.GroundTruth.root_stage / symptom_stage`）。
-> **`failure_class`（A4）**：失效三态之一（`algorithmic_overflow` / `geometric_near_tangent` / `geometric_curvature`，与 playbook
-> `failure_classes` 同枚举）。scorer 据此判"失效分类准确率"——免埋点诊断能跑到的最深判别（决定靶向修法是否对症）。
-> GT 未标则该维不参与（None，不假绿）。
+> **`failure_class`（A4，P2.1 起四态）**：`algorithmic_overflow`（≥2 边两带重叠，可 SSI 互裁）/ **`face_overflow`**（单边单带溢出——
+> 离开支撑面/盖过 edge loop，Parasolid Ch74/loop_c，2026-07-02 新增）/ `geometric_near_tangent` / `geometric_curvature`，与 playbook
+> `failure_classes` 同枚举。scorer 据此判"失效分类准确率"——免埋点诊断能跑到的最深判别（决定靶向修法是否对症）。
+> GT 未标则该维不参与（None，不假绿）。真实 STEP case（E2/E3/E4/E5）的 `agent_run` 多一个 `edges` 字段（读回边号，runner 透传）。
 
 ## 4. 首批 case（A1）
 
