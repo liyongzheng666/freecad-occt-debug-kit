@@ -177,3 +177,21 @@ playbook 节点加 S4 候选后，llm replay 忠实重放**旧轨迹**：录制�
 **LLM 臂首次做出与 rule 不同的真实决策——语义正确的早停**：S2 fired 后更 proximate 的判别（S3/S4）无论结果都不改根（root=最 distal fired），LLM 按 system prompt 语义提前收（E2/E3/E5/pocket tool 9→8、wedge-sliver 11→10），**质量维零损失、成本 -6%**；box-r5（S3 有真实机制证据可采）则跑满与 rule 同。replay 臂与 real 臂**每格逐位一致**（13/13 OK 零 SKIP）——record/replay 纪律在 2 签名 7 候选下依然成立。
 
 > 复现：`bash agent/eval/eval.sh`；`python -m agent.loop.test_investigate_falsegreen`（21 断言：纯裁定 + 四锚点端到端 + 回归量）。
+
+---
+
+## 2026-07-03② 更新：反事实维从"仅判携带"升为真分（C1）
+
+> 变更：投产**离线基线回归门**（C2 Phase 2：`eval/snapshot.py` 冻结 Conclusion + `eval/test_baseline.py` 纯离线重打分断言，进 CI）后，兑现剖析 C1——`scorer` 的**反事实维**不再"仅判是否携带 prose"，而是拿 investigate 真跑的互斥反事实**结构化判别** `counterfactual_verdict`（降半径×扰容差 → S2/S3/S2->S3/inconclusive，[investigate.py](../loop/investigate.py) `_counterfactual_verdict`）**vs GT 根**打真分：verdict 缺失/inconclusive → None（不冒充 0）；claimed 根==GT.root → 1.0；命中症状 → 0.4；无交 → 0.0。
+
+**效果（rule 臂 13 case，仅反事实维变、其余维逐位不动、弃权汇总不变）**：
+
+| 层 | 反事实（旧：仅携带） | 反事实（新：真分 vs GT） |
+| --- | --- | --- |
+| algorithmic_overflow / face_overflow / geometric_curvature / geometric_near_tangent | 携带→None | **1.0**（8 个 S2-NotDone 案例 verdict=S2==GT 根） |
+| 其它(无三态类)·false-green | 0.0 | None（假绿/fixture 未跑互斥反事实腿 → 诚实不打分） |
+| **全集** | **0.0** | **1.0** |
+
+即"5 维里 2 维假分"补掉第一维（机制维真分仍待 A8 truth-run 中间态）。基线门实测：只改 scorer 未重生成快照 → `test_baseline` 变红（精确指出 counterfactual 层漂移）→ 重跑 `python -m agent.eval.snapshot` 更新快照 → 复审 diff 确认仅该维动 → 绿。
+
+> 复现：`python -m agent.eval.test_scorer`（含 6 条反事实真分断言）+ `python -m agent.eval.test_baseline`（离线门）。

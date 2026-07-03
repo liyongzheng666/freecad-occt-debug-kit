@@ -23,12 +23,14 @@ def _gt(failure_class=None) -> GroundTruth:
     )
 
 
-def _concl(stage, chain, *, entities=(), depth="stage", conf=0.5, cf=None, fc=None, abstain=False):
+def _concl(stage, chain, *, entities=(), depth="stage", conf=0.5, cf=None, cf_verdict=None,
+           fc=None, abstain=False):
     if abstain:
         return Conclusion(abstained=True, abstain_reason="证据不足")
     h = CausalHypothesis(
         stage=stage, cause="t", chain=list(chain), entities=list(entities),
-        localization_depth=depth, counterfactual=cf, confidence=conf, failure_class=fc,
+        localization_depth=depth, counterfactual=cf, counterfactual_verdict=cf_verdict,
+        confidence=conf, failure_class=fc,
     )
     return Conclusion(hypotheses=[h])
 
@@ -81,9 +83,16 @@ def main() -> int:
     check("calibration aligned → 1.0", _approx(aligned, 1.0))
     check("calibration overconfident-wrong → 0.0", _approx(overconf, 0.0))
 
-    # 8) 反事实：携带 → 非 miss(None)；不携带 → 0.0
-    check("counterfactual carried → None", score(_concl(S0, [S0, S3], cf="heal"), gt)["counterfactual"] is None)
-    check("counterfactual absent → 0.0", _approx(score(_concl(S0, [S0, S3]), gt)["counterfactual"], 0.0))
+    # 8) 反事实真分（C1）：互斥判别 verdict vs GT 根。gt_s2 根=S2、症状=S3。
+    gt_s2 = GroundTruth(true_chain=[S2, S3], entities=[], expected_evidence="",
+                        aligned_fix="", failure_class="algorithmic_overflow")
+    check("cf verdict==root(S2) → 1.0", _approx(score(_concl(S2, [S2, S3], cf_verdict="S2"), gt_s2)["counterfactual"], 1.0))
+    check("cf verdict S2->S3 (distal=root S2) → 1.0", _approx(score(_concl(S2, [S2, S3], cf_verdict="S2->S3"), gt_s2)["counterfactual"], 1.0))
+    check("cf verdict 命中症状(S3,非根) → 0.4", _approx(score(_concl(S2, [S2, S3], cf_verdict="S3"), gt_s2)["counterfactual"], 0.4))
+    gt_s5 = GroundTruth(true_chain=[S5], entities=[], expected_evidence="", aligned_fix="")
+    check("cf verdict 与链无交(claimed S2 ∉ [S5]) → 0.0", _approx(score(_concl(S5, [S5], cf_verdict="S2"), gt_s5)["counterfactual"], 0.0))
+    check("cf inconclusive → None", score(_concl(S2, [S2, S3], cf_verdict="inconclusive"), gt_s2)["counterfactual"] is None)
+    check("cf 未执行该腿(verdict None) → None", score(_concl(S2, [S2, S3], cf="prose only"), gt_s2)["counterfactual"] is None)
 
     # 9) 缺陷却弃权（wrong_abstain）：定位 n/a（不混入定位准确率，惩罚归 abstention），其余维 None
     r = score(_concl(None, None, abstain=True), gt)
