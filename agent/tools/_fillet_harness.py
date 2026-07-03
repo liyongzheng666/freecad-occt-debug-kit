@@ -23,12 +23,27 @@ def build_shape(case):
     import Part
     # G26 真实模型输入：case 带 brep:/step:/file: 前缀 → 从磁盘读整个 shape（BREP/STEP）。
     # 走现成 Part.Shape().read()（按扩展名选 reader，同 _ssi_harness.load_face）；这里要整个
-    # solid（非 Faces[0]）。要求绝对路径（FreeCADCmd cwd 不保证）。FCStd 不在 v1（需 openDocument）。
+    # solid（非 Faces[0]）。要求绝对路径（FreeCADCmd cwd 不保证）。
     scheme = case.split(":", 1)[0]
     if scheme in ("brep", "step", "file"):
         s = Part.Shape()
         s.read(case.split(":", 1)[1])
         return s
+    # O2：FCStd 直读——FCStd 是 FreeCAD 文档（对象+参数化历史），非裸 shape 文件，read() 不行。
+    # openDocument → 遍历对象取带非空 solid 者，默认最后一个（通常是最终特征/结果）；可选
+    # `fcstd:/abs.FCStd#ObjName`（Name 或 Label）选择器消歧。绝对路径（FreeCADCmd cwd 不保证）。
+    if scheme == "fcstd":
+        import FreeCAD as App
+        path, _, objname = case.split(":", 1)[1].partition("#")
+        doc = App.openDocument(path)
+        cands = [o for o in doc.Objects
+                 if getattr(o, "Shape", None) is not None
+                 and not o.Shape.isNull() and o.Shape.Solids]
+        if objname:
+            cands = [o for o in cands if o.Name == objname or o.Label == objname]
+        if not cands:
+            raise ValueError(f"FCStd 无可用 solid（{objname or '任意对象'}）：{path}")
+        return cands[-1].Shape                   # 默认最后一个带 solid 的对象
     if case == "box":
         return Part.makeBox(10, 20, 30)          # 经典盒子；最短边 10
     if case == "box-flat":

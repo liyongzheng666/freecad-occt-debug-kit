@@ -34,6 +34,23 @@ def _export_step(brep_path: str, step_path: str, timeout_s: int = 60) -> bool:
     return Path(step_path).exists()
 
 
+def _make_fcstd(fcstd_path: str, timeout_s: int = 60) -> bool:
+    """建含两个具名 Part::Feature（BoxA 大 / BoxB 小）的 FreeCAD 文档并存盘（测 O2 fcstd: 直读）。"""
+    bin_path = _resolve_freecadcmd()
+    script = (
+        "import FreeCAD as App, Part\n"
+        "doc = App.newDocument('t')\n"
+        "a = doc.addObject('Part::Feature', 'BoxA'); a.Shape = Part.makeBox(10, 20, 30)\n"
+        "b = doc.addObject('Part::Feature', 'BoxB'); b.Shape = Part.makeBox(5, 5, 5)\n"
+        "doc.recompute()\n"
+        f"doc.saveAs({fcstd_path!r})\n"
+    )
+    sp = Path(tempfile.mkdtemp(prefix="g26fcstd_")) / "mk.py"
+    sp.write_text(script, encoding="utf-8")
+    subprocess.run([str(bin_path), str(sp)], capture_output=True, text=True, timeout=timeout_s)
+    return Path(fcstd_path).exists()
+
+
 def main() -> int:
     fails = []
 
@@ -109,6 +126,24 @@ def main() -> int:
         check("step 载入 + triage 发现近切边", len(ts.near_tangent_pairs) >= 1)
     else:
         print("SKIP step 子测（exportStep 未产出文件）")
+
+    # O2：fcstd: 直读——建含两具名对象的文档，测默认(最后带 solid 者)+#选择器+越界诚实失败
+    fcstd = str(Path(tmp) / "t.FCStd")
+    if _make_fcstd(fcstd):
+        rd = reproduce("fcstd:" + fcstd, radius=0.0, out_dir=tmp)          # 默认=最后一个(BoxB 小)
+        check("fcstd 默认读出 solid（export-only ok）",
+              rd.status == "ok" and bool(rd.bad_shape) and Path(rd.bad_shape).exists())
+        ra = reproduce("fcstd:" + fcstd + "#BoxA", radius=0.0, out_dir=tmp)  # 选择器=BoxA 大
+        check("fcstd #BoxA 选择器读出 solid",
+              ra.status == "ok" and bool(ra.bad_shape) and Path(ra.bad_shape).exists())
+        if rd.bad_shape and ra.bad_shape:
+            check("fcstd 默认(BoxB) ≠ #BoxA（选择器真的在选不同对象）",
+                  Path(rd.bad_shape).read_bytes() != Path(ra.bad_shape).read_bytes())
+        rn = reproduce("fcstd:" + fcstd + "#NoSuchObj", radius=0.0, out_dir=tmp)  # 越界对象名
+        check("fcstd #越界对象 → harness 失败（不静默假绿）",
+              rn.status == "failed" and rn.phase == "harness")
+    else:
+        print("SKIP fcstd 子测（saveAs 未产出文件）")
 
     print(f"\n{'ALL PASS' if not fails else str(len(fails)) + ' FAILED: ' + ', '.join(fails)}")
     return 1 if fails else 0
