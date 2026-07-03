@@ -60,6 +60,17 @@ def main() -> int:
         check("selfx → SelfIntersectingWire status",
               any("SelfIntersect" in x.get("status", "") for x in r.self_intersections))
 
+        # (O1) 面面自交：两重叠 solid 的 compound——BRepCheck 过（各 solid 有效），
+        # 但 BOPAlgo_ArgumentAnalyzer(--check-si) 抓到互穿。证明 BOP 补了 BRepCheck 盲区。
+        bopselfx = Path(d) / "bopselfx.brep"
+        _make(bin_path, "--make-test-bop-selfx", bopselfx)
+        r = check_valid(str(bopselfx))
+        check("bop-selfx → invalid（BOP 抓到 BRepCheck 漏的面面自交）", r.valid is False)
+        check("bop-selfx → source=bop_checkersi 自交",
+              any(x.get("source") == "bop_checkersi" for x in r.self_intersections))
+        # 有效 box 经 --check-si 仍 valid（零假阳——BOP 不误判有效实体的共享边界）
+        check("box + --check-si → 仍 valid（零假阳）", check_valid(str(box)).valid is True)
+
         # 工具崩了不能静默判有效：不存在的 brep → 抛 FileNotFoundError
         raised = False
         try:

@@ -10,9 +10,9 @@
 ⚠️ 覆盖边界（诚实标注——reward signal 一旦悄悄判错整个 eval 跟着腐坏）：
   ✅ BRepCheck_Analyzer 全量（NotClosed / FreeEdge / Invalid* / SelfIntersectingWire …）
   ✅ wire 级自交（BRepCheck_SelfIntersectingWire）
-  ❌ 面面 / 实体级自交（BOPAlgo_CheckerSI）——occ-debug-mesh 暂未跑；fillet overflow 类
-     自交可能漏判。follow-up：扩 occ-debug-mesh 或加独立 BOP pass（G17）。
-  ❌ G1 / 切向连续性、拓扑增量——本工具不覆盖；g1_violations 恒空，notes 标明。
+  ✅ 面面 / 实体级自交（BOPAlgo_CheckerSI，O1）——occ-debug-mesh `--check-si` 跑，抓
+     "IsDone+BRepCheck 过但两面互相穿插"的假绿（source=bop_checkersi）。
+  ❌ G1 / 切向连续性、拓扑增量——本工具不覆盖；g1_violations 恒空，notes 标明（follow-up）。
 
 valid = 没有 severity=="error" 的缺陷。
 """
@@ -63,7 +63,7 @@ def check_valid(brep_path: str, *, timeout_s: int = 30) -> ValidityReport:
 
     with tempfile.TemporaryDirectory(prefix="check_valid_") as d:
         out_mesh = Path(d) / "s.mesh.json"
-        cmd = [str(bin_path), "--timeout", str(timeout_s), str(brep), str(out_mesh)]
+        cmd = [str(bin_path), "--timeout", str(timeout_s), "--check-si", str(brep), str(out_mesh)]
         try:
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s + 10)
         except subprocess.TimeoutExpired:
@@ -80,9 +80,11 @@ def check_valid(brep_path: str, *, timeout_s: int = 30) -> ValidityReport:
     errors = [x for x in defects if x.get("severity") == "error"]
     self_x = [x for x in defects if x.get("category") == "self_intersection"]
 
+    bop_si = [x for x in self_x if x.get("source") == "bop_checkersi"]
     notes = (
         f"{len(defects)} defects ({len(errors)} error); "
-        f"自交仅 BRepCheck wire 级（未含 BOPAlgo_CheckerSI）；G1/切向/拓扑增量未覆盖。"
+        f"自交=BRepCheck wire 级 + BOPAlgo_CheckerSI 面面级（bop_si={len(bop_si)}）；"
+        f"G1/切向/拓扑增量未覆盖。"
     )
     summary = _summary_line(proc.stdout)
     if summary:
