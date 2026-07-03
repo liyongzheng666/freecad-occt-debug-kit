@@ -1,0 +1,28 @@
+name: agent-tests
+
+# 离线单测门（C2 Phase 1）：把 agent/ 的确定性核心（scorer / playbook /
+# decide_llm 解析 / trajectory / review / session / reproduce_crash + investigate
+# 纯裁定函数）永不回归变成强制门。CI runner 无 FreeCADCmd/OCCT/LLDB —— 需二进制的
+# 测试按各自 SKIP 契约干净跳过（exit 0），不 hard-fail。详见 scripts/run-agent-tests.sh。
+
+on:
+  push:
+  pull_request:
+    branches: [main]
+
+jobs:
+  agent-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      # 无第三方依赖（stdlib-only）——不需要 pip install。
+      - name: Run agent test suite
+        run: bash scripts/run-agent-tests.sh
