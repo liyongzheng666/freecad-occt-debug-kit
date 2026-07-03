@@ -17,6 +17,7 @@
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
+#include <BOPAlgo_ArgumentAnalyzer.hxx>  // (O1) face-face self-intersection (bopcheck), beyond BRepCheck
 #include <BRepBuilderAPI_MakeSolid.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>  // non-manifold fixture (3 faces share one edge)
 #include <BRepCheck_Analyzer.hxx>
@@ -752,7 +753,8 @@ void collectInto(const BRepCheck_Analyzer& an, const TopoDS_Shape& sub,
 
 std::vector<Defect> collectDefects(const TopoDS_Shape& shape,
                                    const TopTools_IndexedMapOfShape& faceMap,
-                                   const TopTools_IndexedMapOfShape& edgeMap) {
+                                   const TopTools_IndexedMapOfShape& edgeMap,
+                                   bool bopCheck = false) {
   std::vector<Defect> out;
   std::set<std::string> seen;
 
@@ -784,7 +786,32 @@ std::vector<Defect> collectDefects(const TopoDS_Shape& shape,
 
   try {
     BRepCheck_Analyzer an(shape);
-    if (an.IsValid()) return out;  // clean (apart from any non-manifold edges above)
+    if (an.IsValid()) {
+      // (O1) BRepCheck-clean → THIS is the exact blind spot: "IsDone + BRepCheck-
+      // valid but faces interpenetrate" false-greens (BRepCheck only checks wire-
+      // level self-int). Run BOPAlgo_ArgumentAnalyzer SelfInterMode (= DRAW
+      // `bopcheck`): finds face/face interferences, EXCLUDES legitimate shared
+      // boundaries (so a clean box/fillet is NOT flagged). Only when BRepCheck is
+      // clean — on already-invalid geometry BOP is unreliable and its verdict adds
+      // nothing (validity already false). Only in check_valid path (--check-si),
+      // guarded (≥2 faces) + wrapped (BOP can throw → skip, never crash/false-flag).
+      if (bopCheck && faceMap.Extent() >= 2) {
+        try {
+          BOPAlgo_ArgumentAnalyzer analyzer;
+          analyzer.SetShape1(shape);
+          analyzer.SelfInterMode() = Standard_True;
+          analyzer.StopOnFirstFaulty() = Standard_False;
+          analyzer.Perform();
+          if (analyzer.HasFaulty() && seen.insert("BOP_SelfInterference||").second) {
+            out.push_back({"self_intersection", "bop_checkersi", "BOP_SelfInterference", "", ""});
+          }
+        } catch (const Standard_Failure& e) {
+          std::cerr << "[occ-debug-mesh] BOP self-intersection check failed (skipped): "
+                    << e.GetMessageString() << "\n";
+        }
+      }
+      return out;  // clean (apart from any non-manifold edges + BOP self-int above)
+    }
     for (Standard_Integer i = 1; i <= faceMap.Extent(); ++i) {
       collectInto(an, faceMap.FindKey(i), "F" + std::to_string(i), "", seen, out);
     }
@@ -879,7 +906,8 @@ private:
   std::chrono::steady_clock::time_point myDeadline;
 };
 
-int convert(const std::string& inPath, const std::string& outPath, double timeoutSec = 0.0) {
+int convert(const std::string& inPath, const std::string& outPath, double timeoutSec = 0.0,
+            bool bopCheck = false) {
   TopoDS_Shape shape;
   BRep_Builder builder;
   if (!BRepTools::Read(shape, inPath.c_str(), builder) || shape.IsNull()) {
@@ -923,7 +951,7 @@ int convert(const std::string& inPath, const std::string& outPath, double timeou
   TopExp::MapShapes(shape, TopAbs_VERTEX, verts);
 
   // Diagnose defects (face/edge ids share the same maps -> refs line up, M2-5).
-  const std::vector<Defect> defects = collectDefects(shape, faces, edges);
+  const std::vector<Defect> defects = collectDefects(shape, faces, edges, bopCheck);
 
   // Edge polylines: on-face edges reuse the face mesh, bare edges discretize
   // the 3D curve (§7). edge_id == MapShapes index, same as defect refs.
@@ -1067,6 +1095,29 @@ int makeTestSelfx(const std::string& outPath) {
     return 2;
   }
   std::cerr << "[occ-debug-mesh] wrote self-intersecting face -> " << outPath << "\n";
+  return 0;
+}
+
+// (O1) Two valid solid boxes that OVERLAP (share the volume x in [5,10]), placed
+// in one compound. Each solid is BRepCheck-valid and the compound passes
+// BRepCheck (it checks sub-shapes, not inter-solid interference) — but the two
+// solids' faces interpenetrate, so BOPAlgo_CheckerSI (--check-si) flags a
+// self-intersection. This is the fixture that proves the BOP pass catches what
+// BRepCheck (wire-level only) misses.
+int makeTestBopSelfx(const std::string& outPath) {
+  TopoDS_Shape a = BRepPrimAPI_MakeBox(gp_Pnt(0, 0, 0), 10.0, 10.0, 10.0).Solid();
+  TopoDS_Shape b = BRepPrimAPI_MakeBox(gp_Pnt(5, 0, 0), 10.0, 10.0, 10.0).Solid();  // overlaps A
+  BRep_Builder builder;
+  TopoDS_Compound comp;
+  builder.MakeCompound(comp);
+  builder.Add(comp, a);
+  builder.Add(comp, b);
+  if (comp.IsNull() || !BRepTools::Write(comp, outPath.c_str())) {
+    std::cerr << "[occ-debug-mesh] failed to write bop-selfx compound: " << outPath << "\n";
+    return 2;
+  }
+  std::cerr << "[occ-debug-mesh] wrote overlapping-solids compound (BOP self-int) -> "
+            << outPath << "\n";
   return 0;
 }
 
@@ -1285,6 +1336,9 @@ int main(int argc, char** argv) {
   if (argc >= 3 && std::string(argv[1]) == "--make-test-selfx") {
     return makeTestSelfx(argv[2]);
   }
+  if (argc >= 3 && std::string(argv[1]) == "--make-test-bop-selfx") {
+    return makeTestBopSelfx(argv[2]);
+  }
   if (argc >= 3 && std::string(argv[1]) == "--make-test-edge") {
     return makeTestEdge(argv[2]);
   }
@@ -1320,20 +1374,33 @@ int main(int argc, char** argv) {
   }
   // Optional mesh watchdog: --timeout <sec> before the input path (0/absent = off).
   // On expiry, unmeshed faces fall into failed_faces (partial=true), no crash (V2).
+  // (O1) --check-si opt-in: run BOPAlgo_CheckerSI face-face self-intersection.
+  // Off by default → the mesh-export path (daemon/viewer) is unchanged (BOP is
+  // heavier); only check_valid passes --check-si.
   double timeoutSec = 0.0;
+  bool bopCheck = false;
   int argi = 1;
-  if (std::string(argv[argi]) == "--timeout") {
-    if (argi + 1 >= argc) {
-      std::cerr << "[occ-debug-mesh] --timeout needs a value in seconds\n";
+  while (argi < argc && std::string(argv[argi]).rfind("--", 0) == 0) {  // leading flags, any order
+    const std::string flag = argv[argi];
+    if (flag == "--timeout") {
+      if (argi + 1 >= argc) {
+        std::cerr << "[occ-debug-mesh] --timeout needs a value in seconds\n";
+        return 1;
+      }
+      timeoutSec = std::atof(argv[argi + 1]);
+      argi += 2;
+    } else if (flag == "--check-si") {
+      bopCheck = true;
+      argi += 1;
+    } else {
+      std::cerr << "[occ-debug-mesh] unknown option: " << flag << "\n"
+                << "usage: occ-debug-mesh [--timeout <sec>] [--check-si] <input.brep> [output.mesh.json]\n";
       return 1;
     }
-    timeoutSec = std::atof(argv[argi + 1]);
-    argi += 2;
   }
-  if (argi >= argc || std::string(argv[argi]).rfind("--", 0) == 0) {  // unknown flag / no input (M3)
-    std::cerr << "[occ-debug-mesh] unknown option or missing input: "
-              << (argi < argc ? argv[argi] : "(none)") << "\n"
-              << "usage: occ-debug-mesh [--timeout <sec>] <input.brep> [output.mesh.json]\n";
+  if (argi >= argc) {  // missing input (M3)
+    std::cerr << "[occ-debug-mesh] missing input\n"
+              << "usage: occ-debug-mesh [--timeout <sec>] [--check-si] <input.brep> [output.mesh.json]\n";
     return 1;
   }
   const std::string inPath = argv[argi];
@@ -1341,7 +1408,7 @@ int main(int argc, char** argv) {
   // Top-level safety net: any kernel exception that escapes convert() becomes a
   // clean error exit, never std::terminate (B1).
   try {
-    return convert(inPath, outPath, timeoutSec);
+    return convert(inPath, outPath, timeoutSec, bopCheck);
   } catch (const Standard_Failure& e) {
     std::cerr << "[occ-debug-mesh] fatal: " << e.GetMessageString() << "\n";
     return 3;
