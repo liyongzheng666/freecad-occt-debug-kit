@@ -581,6 +581,7 @@ def _diagnose_via_playbook(case, radius, run, out, sink, verbose, policy="rule",
     cls = _classify_s2_failure(case, radius, node, sink, verbose, edges=edges) if cand["stage"] == "S2" else None
     failure_class = None
     entities: list[str] = []
+    cf_verdict = None                       # C1：互斥反事实的结构化判别（仅 S2 腿执行时有值）
     if cls is not None:
         key, info, why, entities = cls
         failure_class = key
@@ -590,6 +591,7 @@ def _diagnose_via_playbook(case, radius, run, out, sink, verbose, policy="rule",
         # （不动半径），两修法成功组合判别 S2 / S3 / S2→S3（root-cause §4 腿3）。
         tol_fix = _probe_tolerance_fix(case, radius, out, sink, verbose, edges=edges)
         cf_label, cf_why = _counterfactual_verdict(True, tol_fix)
+        cf_verdict = cf_label                # C1：结构化挂到 hypothesis 供 scorer vs GT 打真分
         _log(verbose, f"  互斥反事实 [{cf_label}]：{cf_why}")
         counterfactual = (f"修法：{info['fix']}"
                           + ("（几何可救，非降半径）" if salv else "（降半径之外无解）")
@@ -621,6 +623,7 @@ def _diagnose_via_playbook(case, radius, run, out, sink, verbose, policy="rule",
         entities=entities,
         localization_depth=depth, confidence=conf,
         counterfactual=counterfactual,
+        counterfactual_verdict=cf_verdict,
         evidence=evidence,
         failure_class=failure_class,
     )])

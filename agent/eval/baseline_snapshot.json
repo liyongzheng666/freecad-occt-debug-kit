@@ -16,6 +16,7 @@
             "failure_class": "algorithmic_overflow",
             "confidence": 0.7,
             "counterfactual": "修法：SSI 互裁（trim）或 perturb_tolerance；降半径亦可但非必需（几何可救，非降半径）｜互斥反事实[S2]：降半径有效、扰容差(≤0.1)无效 → 失败半径/几何相关(S2)，排除 S3 容差敏感(数值病态)",
+            "counterfactual_verdict": "S2",
             "cause": "圆角半径相对几何过大：滚球容纳不下，blend 面建不出。失效类别【algorithmic_overflow】：两相邻圆角面重叠（StripeEdgeInter 'too big radiuses'），几何可裁剪（多边 blend + 平面/非近切/无曲率约束（最小二面角 90.0°）→ 相邻带可重叠）",
             "evidence": [
               "playbook 命中 fillet-notdone-overflow：近端阶段 S2",
@@ -47,6 +48,7 @@
             "failure_class": "face_overflow",
             "confidence": 0.7,
             "counterfactual": "修法：lower_radius（≤ 相邻面局部半宽）或 heal/延伸邻面；无 SSI 互裁语义（无第二条带可裁）（降半径之外无解）｜互斥反事实[S2]：降半径有效、扰容差(≤0.1)无效 → 失败半径/几何相关(S2)，排除 S3 容差敏感(数值病态)",
+            "counterfactual_verdict": "S2",
             "cause": "圆角半径相对几何过大：滚球容纳不下，blend 面建不出。失效类别【face_overflow】：单条 blend 半径超出相邻面局部尺度：blend 离开支撑面 / 盖过 edge loop 伸出实体（Parasolid loop_c / overflow onto neighbour），非两带重叠（单条 blend 边（edge#1）+ 平面/非近切/无曲率（最小二面角 90.0°）→ 单带 overflow，非两带重叠）",
             "evidence": [
               "playbook 命中 fillet-notdone-overflow：近端阶段 S2",
@@ -80,6 +82,7 @@
             "failure_class": null,
             "confidence": 0.65,
             "counterfactual": null,
+            "counterfactual_verdict": null,
             "cause": "代理奖励陷阱：fillet『完成』(is_done=True) 但 check_valid 判无效——缺陷类别 ['other']，自交 0 处。裸 IsDone 会把它误判为成功。",
             "evidence": [
               "check_valid: invalid（['other'], selfX=0）",
@@ -105,6 +108,7 @@
             "failure_class": "face_overflow",
             "confidence": 0.7,
             "counterfactual": "修法：lower_radius（≤ 相邻面局部半宽）或 heal/延伸邻面；无 SSI 互裁语义（无第二条带可裁）（降半径之外无解）｜互斥反事实[S2]：降半径有效、扰容差(≤0.1)无效 → 失败半径/几何相关(S2)，排除 S3 容差敏感(数值病态)",
+            "counterfactual_verdict": "S2",
             "cause": "圆角半径相对几何过大：滚球容纳不下，blend 面建不出。失效类别【face_overflow】：单条 blend 半径超出相邻面局部尺度：blend 离开支撑面 / 盖过 edge loop 伸出实体（Parasolid loop_c / overflow onto neighbour），非两带重叠（单条 blend 边（edge#6）+ 平面/非近切/无曲率（最小二面角 90.0°）→ 单带 overflow，非两带重叠）",
             "evidence": [
               "playbook 命中 fillet-notdone-overflow：近端阶段 S2",
@@ -141,6 +145,7 @@
             "failure_class": null,
             "confidence": 0.65,
             "counterfactual": "改边选（让 blend 不终止在曲面上）/延长被圆角边越过曲面区",
+            "counterfactual_verdict": null,
             "cause": "代理奖励陷阱：fillet『完成』(is_done=True) 但 check_valid 判无效。根因细分【S4】：端盖/corner 构造在曲面终止处写出坏几何（NotClosed/Unorientable/端部自交环）：blend 自由端撞曲面，PerformIntersectionAtEnd 未能干净闭合但未抛错（缺陷面精确落在自由端盖：F7(d_end=0.0)（端盖构造写坏几何））",
             "evidence": [
               "playbook 命中 fillet-falsegreen-invalid：近端阶段 S6",
@@ -176,6 +181,7 @@
             "failure_class": null,
             "confidence": 0.65,
             "counterfactual": "避免直接在参数支撑面上 blend（先转解析/分割），或降半径远离参数面边界",
+            "counterfactual_verdict": null,
             "cause": "代理奖励陷阱：fillet『完成』(is_done=True) 但 check_valid 判无效。根因细分【S2】：参数(B-surface)支撑面上的 blend 面构造写出坏几何：B-spline/Bezier 偏移有界、延伸受限（Parasolid bsurf_c 族），IsDone 但面自交/不可定向（blend 边支撑面含参数面 ['BSplineSurface']（bsurf 族：偏移有界/延伸受限，blend 面构造易写坏几何））",
             "evidence": [
               "playbook 命中 fillet-falsegreen-invalid：近端阶段 S6",
@@ -213,6 +219,7 @@
             "failure_class": "algorithmic_overflow",
             "confidence": 0.7,
             "counterfactual": "修法：SSI 互裁（trim）或 perturb_tolerance；降半径亦可但非必需（几何可救，非降半径）｜互斥反事实[S2]：降半径有效、扰容差(≤0.1)无效 → 失败半径/几何相关(S2)，排除 S3 容差敏感(数值病态)",
+            "counterfactual_verdict": "S2",
             "cause": "圆角半径相对几何过大：滚球容纳不下，blend 面建不出。失效类别【algorithmic_overflow】：两相邻圆角面重叠（StripeEdgeInter 'too big radiuses'），几何可裁剪（多边 blend + 平面/非近切/无曲率约束（最小二面角 90.0°）→ 相邻带可重叠）",
             "evidence": [
               "playbook 命中 fillet-notdone-overflow：近端阶段 S2",
@@ -246,6 +253,7 @@
             "failure_class": "geometric_curvature",
             "confidence": 0.7,
             "counterfactual": "修法：lower_radius（≤曲率半径）或 改输入孔径（降半径之外无解）｜互斥反事实[S2]：降半径有效、扰容差(≤0.1)无效 → 失败半径/几何相关(S2)，排除 S3 容差敏感(数值病态)",
+            "counterfactual_verdict": "S2",
             "cause": "圆角半径相对几何过大：滚球容纳不下，blend 面建不出。失效类别【geometric_curvature】：r > 局部凹曲率半径，球比孔/凹腔还大、塞不进（r=4.0 > 支撑面凹曲率半径 3.0（凹曲率面 face#6））",
             "evidence": [
               "playbook 命中 fillet-notdone-overflow：近端阶段 S2",
@@ -278,6 +286,7 @@
             "failure_class": "algorithmic_overflow",
             "confidence": 0.75,
             "counterfactual": "heal 近切支撑面使接触曲线非退化；fixture 路径（合成，非真实 fillet 失败现场）",
+            "counterfactual_verdict": null,
             "cause": "面面求交退化（fixture='near-tangent'：近切夹角<5° + section_edges=0 → S3 接触退化）",
             "evidence": [
               "fixture ssi_probe('near-tangent')：面面求交退化：期望 contact 实得 section=0，两面近切 0.0° → S3 签名"
@@ -328,6 +337,7 @@
             "failure_class": null,
             "confidence": 0.65,
             "counterfactual": "lower_radius（≤半厚）或 SSI 互裁",
+            "counterfactual_verdict": null,
             "cause": "代理奖励陷阱：fillet『完成』(is_done=True) 但 check_valid 判无效。根因细分【S3】：两 blend 带中段交叠自交（薄件双侧带相遇），拓扑缝合仍完成 → 假绿（自交缺陷 ['F1', 'F17', 'F19', 'F2', 'F21', 'F7', 'F8', 'F9'] 非端局部（中段带-带交叠型））",
             "evidence": [
               "playbook 命中 fillet-falsegreen-invalid：近端阶段 S6",
@@ -359,6 +369,7 @@
             "failure_class": "geometric_near_tangent",
             "confidence": 0.7,
             "counterfactual": "修法：lower_radius 或 heal 近切（增大夹角）（降半径之外无解）｜互斥反事实[S2]：降半径有效、扰容差(≤0.1)无效 → 失败半径/几何相关(S2)，排除 S3 容差敏感(数值病态)",
+            "counterfactual_verdict": "S2",
             "cause": "圆角半径相对几何过大：滚球容纳不下，blend 面建不出。失效类别【geometric_near_tangent】：支撑面近切，滚球坐不住起始解（StartSol echec）（支撑面近切（最小二面角 1.718° < 10.0°，近切边 edge#0））",
             "evidence": [
               "playbook 命中 fillet-notdone-overflow：近端阶段 S2",
@@ -392,7 +403,7 @@
         "localization": 0.9,
         "failure_class": 1.0,
         "mechanism": 0.2,
-        "counterfactual": null,
+        "counterfactual": 1.0,
         "calibration": 0.717,
         "tool_calls": 6.667
       },
@@ -401,7 +412,7 @@
         "localization": 1.0,
         "failure_class": 1.0,
         "mechanism": 0.2,
-        "counterfactual": null,
+        "counterfactual": 1.0,
         "calibration": 0.7,
         "tool_calls": 9.0
       },
@@ -410,7 +421,7 @@
         "localization": 0.85,
         "failure_class": null,
         "mechanism": 0.35,
-        "counterfactual": 0.0,
+        "counterfactual": null,
         "calibration": 0.675,
         "tool_calls": 3.0
       },
@@ -428,7 +439,7 @@
         "localization": 1.0,
         "failure_class": 1.0,
         "mechanism": 0.5,
-        "counterfactual": null,
+        "counterfactual": 1.0,
         "calibration": 0.7,
         "tool_calls": 9.0
       },
@@ -437,7 +448,7 @@
         "localization": 1.0,
         "failure_class": 1.0,
         "mechanism": 0.5,
-        "counterfactual": null,
+        "counterfactual": 1.0,
         "calibration": 0.7,
         "tool_calls": 10.0
       },
@@ -446,7 +457,7 @@
         "localization": 0.918,
         "failure_class": 1.0,
         "mechanism": 0.309,
-        "counterfactual": 0.0,
+        "counterfactual": 1.0,
         "calibration": 0.695,
         "tool_calls": 6.231
       }

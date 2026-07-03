@@ -10,7 +10,7 @@
   | 定位 localization | ✅ 全量自动判（因果链部分得分 + 实体召回） | 仅需 GT.true_chain（已有） |
   | 失效分类 failure_class | ✅ 全量自动判（三态精确匹配） | GT.failure_class + 结论结构化 failure_class（已有） |
   | 机制 mechanism    | ⚠️ 仅深度代理 | 真值需 truth-run 中间态（交线条数等），A8 接 |
-  | 反事实 counterfactual | ⚠️ 仅"是否携带" | 真值需执行靶向修法重跑判 S6 有效，需 OCCT |
+  | 反事实 counterfactual | ✅ 真分（C1）：互斥判别 verdict vs GT 根 | investigate 已真跑降半径×扰容差；该腿未执行 → None |
   | 校准 calibration  | ✅ 单 case 置信-正确对齐；弃权精度是集合量，runner 汇总 | — |
 
 定位维度对【因果链】给部分得分（GroundTruth.true_chain，缺口1）：命中根
@@ -71,6 +71,34 @@ def _failure_class(pred: CausalHypothesis, gt: GroundTruth) -> float | None:
     if gt.failure_class is None or pred.failure_class is None:
         return None
     return 1.0 if pred.failure_class == gt.failure_class else _MISS
+
+
+# 互斥反事实 verdict（investigate 执行出的判别）→ claimed 根阶段（distal）
+_CF_CLAIMED_ROOT = {"S2": Stage.S2_SURFACE, "S3": Stage.S3_SSI, "S2->S3": Stage.S2_SURFACE}
+
+
+def _counterfactual(pred: CausalHypothesis, gt: GroundTruth) -> float | None:
+    """反事实真分（C1）：互斥反事实执行出的判别 vs GT 根（root-cause-verification.md §4 腿3）。
+
+    pred.counterfactual_verdict ∈ {"S2","S3","S2->S3","inconclusive"}——investigate 真跑
+    降半径×扰容差两互斥修法出的结构化判别（不是那句 prose）。map 到 claimed 根：S2->S3 取
+    distal=S2。分档镜像 _stage_localization：命中根 > 命中症状 > miss。
+      - verdict 缺失 / inconclusive（该腿未执行或没区分出来）→ None（诚实不打分，不冒充 0）
+      - claimed 根 == GT.root_stage → 1.0
+      - claimed 根 ∈ GT.true_chain（命中症状而非根）→ 0.4
+      - claimed 根 与 true_chain 无交 → 0.0
+    """
+    v = pred.counterfactual_verdict
+    if not v or v == "inconclusive":
+        return None
+    claimed = _CF_CLAIMED_ROOT.get(v)
+    if claimed is None:
+        return None
+    if claimed == gt.root_stage:
+        return _HIT_ROOT_AS_ROOT
+    if claimed in gt.true_chain:
+        return _HIT_SYMPTOM_ONLY
+    return _MISS
 
 
 def _abstention_verdict(gt: GroundTruth, abstained: bool) -> str:
@@ -161,8 +189,8 @@ def score(
     # —— 机制（深度代理，真值待 truth-run 中间态）——
     mechanism = _MECH_DEPTH_PROXY.get(top.localization_depth, 0.0)
 
-    # —— 反事实（仅判是否携带；S6 有效性需执行）——
-    counterfactual = None if top.counterfactual else _MISS
+    # —— 反事实（C1 真分：互斥判别 verdict vs GT 根；未执行该腿 → None）——
+    counterfactual = _counterfactual(top, gt)
 
     # —— 校准（单 case：置信度与定位正确性对齐）——
     calibration = 1.0 - abs(top.confidence - stage_loc)
@@ -180,7 +208,8 @@ def score(
         failure_class_basis="三态精确匹配（GT.failure_class vs 结论 failure_class）；None=任一方未标",
         mechanism_basis="深度代理（localization_depth）；真机制正确性待 truth-run 中间态接入（A8）",
         counterfactual_basis=(
-            "仅判是否携带靶向修法；S6 有效性 + 互斥判别需执行 reproduce+check_valid（OCCT）"
+            "真分（C1）：互斥反事实执行出的判别（降半径×扰容差，verdict=%s）vs GT 根；"
+            "该腿未执行/inconclusive → None（不冒充 0）" % (top.counterfactual_verdict or "—")
         ),
         calibration_basis="单 case 置信-正确对齐；弃权精度由 runner 汇总",
     )

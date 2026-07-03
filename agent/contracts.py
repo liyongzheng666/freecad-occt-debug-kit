@@ -129,7 +129,8 @@ class CausalHypothesis:
     entities: list[str] = field(default_factory=list)        # 涉及的面/边/顶点
     localization_depth: str = "stage"                        # "stage" | "entity" | "mechanism"
     evidence: list[Evidence] = field(default_factory=list)
-    counterfactual: Optional[str] = None                     # 靶向修法及其结果
+    counterfactual: Optional[str] = None                     # 靶向修法及其结果（人读 prose）
+    counterfactual_verdict: Optional[str] = None             # 互斥反事实执行出的结构化判别（"S2"|"S3"|"S2->S3"|"inconclusive"）；None=该腿未跑。scorer 据此对 GT.root 打真分（C1）
     confidence: float = 0.0
     failure_class: Optional[str] = None                      # 失效三态：algorithmic_overflow / geometric_near_tangent / geometric_curvature（playbook failure_classes）
 
