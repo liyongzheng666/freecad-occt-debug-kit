@@ -1,15 +1,26 @@
 # 圆角缺陷调研 Agent —— 推进路线图与欠缺项清单
 
-> 状态：**Agent v0 + 根因 Eval + rule/LLM A/B + 轨迹/标注闭环（含 viewer review 写回）+ G26 真实模型输入(v1) + Parasolid 对照补足第一轮（失效四态 + STEP 真值资产 + kernel_crash 兜底）已投产**（A0–A7 工具层 ✅，A6 全闭环 ✅，G26 BREP/STEP+指定边 ✅，P0.1/P1.1/P1.2/P2.1 ✅；下一站 P1.3 triage 补全 / P2.2 S4 顶点 / A8 深探针 / FCStd 直读）<br>
+> 状态：**Agent v0 + 根因 Eval + rule/LLM A/B + 轨迹/标注闭环（含 viewer review 写回）+ G26 真实模型输入(v1) + Parasolid 对照补足第一轮（失效四态 + STEP 真值资产 + kernel_crash 兜底）已投产**（A0–A7 工具层 ✅，A6 全闭环 ✅，G26 BREP/STEP+指定边 ✅，P0.1/P1.1/P1.2/P2.1 ✅，**剖析加固 C1/C2/O1/O2/O3 ✅**；下一站 A8 深探针 / Y 档打磨）<br>
 > **最终目标：根因寻找（root-cause finding）**——不是"把圆角修好"，而是定位"圆角失败是流水线哪一阶段先崩、为什么崩"，并给出可验证的因果结论供人 review。<br>
 > 面试对标：DeepSeek **Harness 工程师**（agent 脚手架 + eval 基础设施）。<br>
 > 关联真源：[playbook/blend-failure-ontology.md](playbook/blend-failure-ontology.md)（失效本体）、[docs/root-cause-verification.md](docs/root-cause-verification.md)（根因验证方法学）、[../docs/occ-fillet-debug-agent-architecture.md](../docs/occ-fillet-debug-agent-architecture.md)（架构）、[../docs/fillet-para-study-and-agent-gap-plan.md](../docs/fillet-para-study-and-agent-gap-plan.md)（Parasolid 失效分类学对照 + 补足计划 + 执行进展）、[../docs/occ-mesh-daemon-plan.md](../docs/occ-mesh-daemon-plan.md)。
 
 ---
 
-## 进度快照（最近更新 2026-07-02）
+## 进度快照（最近更新 2026-07-04）
 
-**已投产（真跑 + 自测，18 个 test 模块全绿：scorer / session / check_valid / reproduce / reproduce_crash / ssi_probe / playbook / triage_input / capture / decide_llm / trajectory / review / investigate_ssi / investigate_cf / investigate_overflow / investigate_vertex / **investigate_falsegreen** / g26_realmodel）**：
+### 剖析驱动的加固（2026-07-04，6 PR 合并 #7–#12）——把"手动断言 / 装饰性代理 / 静默失效"补成硬护栏
+
+- **C2 CI + 基线回归门（#7 #8）**：接 GitHub Actions 离线单测（`scripts/run-agent-tests.sh`，Python 3.10/3.12，无 OCCT 干净 SKIP）把确定性核心"永不回归"变强制门；再加 `eval/snapshot.py`+`eval/test_baseline.py` 把 baselines 数字**冻结成 CI 断言**（Conclusion 快照重打分），scorer/聚合一漂移即变红。
+- **C1 反事实真分（#9）**：`scorer` 反事实维从"仅判是否携带 prose"升为"互斥判别 verdict vs GT 根"**真分**（全集 0.0→1.0，仅该维动、其余逐位不变）——"5 维 2 假分"补掉第一维（机制维真分仍待 A8）。
+- **O1 面面自交（#10）**：`check_valid` 补 `BOPAlgo_ArgumentAnalyzer`（`--check-si`，**仅 BRepCheck 干净时跑**）堵"IsDone+BRepCheck 过但两面互穿"的假绿盲区；新 fixture 实证 + 对现有 case 零回归（基线门确认，此前 BOP 误放 BRepCheck 前致 E4 漂移被门抓回）。
+- **O2 FCStd 直读（#11）**：`build_shape` 认 `fcstd:` 前缀（`openDocument` + 取 solid + `#ObjName` 选择器）——从合成 case 跨到用户真实 FreeCAD 文档。
+- **O3 SSI 护栏（#12）**：`workspace-doctor.sh` 校验 `OCCT_DEBUG_SSI_OUT` 改造在源码 + 已装 dylib 在位，把 WP5 静默失效变显式 warn。
+- **C3/C4 诚实归档**：LLM 质量价值架构上是死胡同（rule 结论 order-independent → 只能赢成本不赢正确性）、S4-NotDone/因果链是已知负结果 → 不硬造。剖析全景见工作区 [../README.md](../README.md)「项目现状总览」。
+
+---
+
+**已投产（真跑 + 自测，19 个 test 模块全绿：scorer / **eval.test_baseline（基线门）** / session / check_valid / session / check_valid / reproduce / reproduce_crash / ssi_probe / playbook / triage_input / capture / decide_llm / trajectory / review / investigate_ssi / investigate_cf / investigate_overflow / investigate_vertex / **investigate_falsegreen** / g26_realmodel）**：
 
 - **工具层**：`reproduce`(FreeCADCmd, real+replay，**信号退出归 `kernel_crash`**——P1.1/G28) · `check_valid`(occ-debug-mesh BRepCheck) · `ssi_probe`(面面求交→S3签名) · `capture`(LLDB 活几何→BREP) · `triage_input`(近切+凹曲率判别) · `playbook`(决策表)。
 - **回路 ★里程碑1**：`loop/investigate.py` 决策表驱动 v0——observe(`reproduce`) → **`decide(state)` 接缝**逐候选判别(check_valid_input / radius_probe / ssi_probe) → **失效三态分类** → 对症反事实 → `emit_conclusion`。决策走 policy 接缝（`decide_rule` / `decide_llm` 同签名 A/B），模型只在此点、其余确定性。
@@ -71,7 +82,7 @@
 | G2 | **Agent-native 工具接口**（typed in/out、结构化错误、统一 action surface） | 只有给人用的 CLI + shell + README | 🔴 | A2 |
 | G3 | **可执行验证**（靶向子复现 + 互斥反事实，**非 `IsDone()` 二分**） | 没有；结论无法自证 | 🔴 | A2/A3 |
 | G4 | **结构化 playbook**（症状→候选根因→区分观测的决策表） | ✅ `fillet-failures.json` 决策表 + `query_playbook`；investigate 据此逐候选跑判别器 | 🔴 | A2 |
-| G17 | **几何有效性 verifier**（BRepCheck + 自交 + G1 + 拓扑增量，替代 `IsDone()`） | 🟡 BRepCheck 级**已实做**（`check_valid` 走 occ-debug-mesh，真几何自测 `tools/test_check_valid.py`，14 个真实 BREP 零误报）；**P1.2 实证缺口比原判窄**：真实模型假绿（`E4-groove-false-green` r=15，IsDone=true）被现有 BRepCheck 直接拦住（1 invalid_subshape），无需 BOP；⏳ 面面自交（BOPAlgo_CheckerSI）+ G1/切向 + 拓扑增量待补 | 🔴 | A2 |
+| G17 | **几何有效性 verifier**（BRepCheck + 自交 + G1 + 拓扑增量，替代 `IsDone()`） | 🟡 BRepCheck 级**已实做**（`check_valid` 走 occ-debug-mesh，真几何自测 `tools/test_check_valid.py`，14 个真实 BREP 零误报）；**P1.2 实证缺口比原判窄**：真实模型假绿（`E4-groove-false-green` r=15，IsDone=true）被现有 BRepCheck 直接拦住（1 invalid_subshape），无需 BOP；✅ **O1（#10）**：面面/实体级自交经 `BOPAlgo_ArgumentAnalyzer`（`check_valid --check-si`，仅 BRepCheck 干净时跑，`source=bop_checkersi`）已补——堵"IsDone+BRepCheck 过但两面互穿"盲区，fixture 实证 + 零回归；⏳ G1/切向 + 拓扑增量仍待 | 🔴 | A2 |
 | G19 | **失效本体 + 症状/阶段适配层**（playbook 骨架） | 🟡 适配层已代码化（symptom→近端阶段节点 + distal 候选 + 判别器映射）；本体多签名待扩 | 🔴 | A2 |
 | G20 | **根因三腿验证**（定位 / 机制 / 反事实，含互斥靶向修法判别） | 方法学已写（见 docs/），未实现 | 🔴 | A3 |
 | G18 | **输入预检 triage（S0 输入质量）**——agent 首发诊断 | ✅ **P1.3 收口（2026-07-02②）**：近切+凹曲率判别（驱动四态）+ 四字段补全——`convexity`（角占率探针：边中点垂直面 16 点小圆 isInside 占率≈材料楔角/360，方向无关；pocket 盲孔底缘=唯一凹边实证）/`short_edges`/`sliver_faces`/`tolerance_outliers`（薄片 fixture 正例）。**只报告不进判别**（判别量逐位不变）。输入 BRepCheck 由既有 check_valid_input 判别器覆盖 | 🟠 | A2 |
@@ -92,7 +103,7 @@
 | G14 | **SurfData/corner 深探针（S2/S4）** | 依赖 G13 | 🟡 | A8 |
 | G15 | **沙箱 / 资源上限 / per-case 隔离 / 并发** | daemon 有单点 timeout，未泛化 | 🟡 | A8 |
 | G16 | **泛化 adapter**（chamfer / boolean / offset；本体已内核无关） | 仅 fillet | 🟡 | A8 |
-| G26 | **真实模型输入 adapter**（载入用户 FCStd/STEP/BREP + 指定边 + 单边 triage）——从合成 case 跨到真实失败诊断 | 🟡 **v1 已投产**（2026-07-01）：`build_shape` 认 `brep:/step:/file:` 前缀载真几何（BREP+STEP，走 `Part.Shape().read()`）；`edges` 穿透 reproduce(`REPRO_EDGES`) 全诊断链；`triage_input(edge_index=)` 单边聚焦（`TRIAGE_EDGE_INDEX`）；CLI `investigate "brep:/abs.brep" <r> --edges N`。自测 `tools/test_g26_realmodel.py`（自足 round-trip，缺 FreeCADCmd SKIP）。⚠️ **坑（P0.1 实证）**：STEP 导出+重读会**重编号边**（`Part.Shape().read()` 边序 ≠ 内存构建序，E4 7→8、E5 7→6）——边号必须对**读回后**的 shape 复核。⏳ 待补：FCStd 直读（需 openDocument + Part::Feature 遍历）、多边 triage 消歧 | 🟠 | A6 |
+| G26 | **真实模型输入 adapter**（载入用户 FCStd/STEP/BREP + 指定边 + 单边 triage）——从合成 case 跨到真实失败诊断 | 🟡 **v1 已投产**（2026-07-01）：`build_shape` 认 `brep:/step:/file:` 前缀载真几何（BREP+STEP，走 `Part.Shape().read()`）；`edges` 穿透 reproduce(`REPRO_EDGES`) 全诊断链；`triage_input(edge_index=)` 单边聚焦（`TRIAGE_EDGE_INDEX`）；CLI `investigate "brep:/abs.brep" <r> --edges N`。自测 `tools/test_g26_realmodel.py`（自足 round-trip，缺 FreeCADCmd SKIP）。⚠️ **坑（P0.1 实证）**：STEP 导出+重读会**重编号边**（`Part.Shape().read()` 边序 ≠ 内存构建序，E4 7→8、E5 7→6）——边号必须对**读回后**的 shape 复核。✅ **O2（#11）**：FCStd 直读已补（`build_shape` 认 `fcstd:` 前缀，`openDocument` + 取带 solid 对象，默认最后一个 + `fcstd:/abs.FCStd#ObjName` 选择器消歧）；⏳ 多边 triage 消歧（逐边找元凶）留 follow-up（纠缠 E2 多边基线） | 🟠 | A6 |
 | G27 | **overflow 现象维**（单带溢出 vs 两带重叠二分；Parasolid Ch74 overflow + §77.3.4 loop_c 对照） | ✅ **P2.1 已落地**（2026-07-02）：playbook 加 `face_overflow` 四态；`_classify_s2_failure` else 分支按 **blend 边数二分**（单边=单带溢出 / ≥2 边=两带重叠）——修掉"单边 case 谎称两相邻带重叠"的假机制。自测 `loop/test_investigate_overflow.py`（box-r5/E2 回归 + E3/E5/E6 转类 + cause 文案断言）。⏳ 细分 loop vs neighbour 溢出（P2.3）、smooth/cliff/notch 现象识别留后 | 🟠 | P2 |
 | G28 | **内核崩溃归类**（进程被信号打死 ≠ harness 逻辑无输出） | ✅ **P1.1 已落地**（2026-07-02）：`reproduce` 把 rc<0 / ≥128 归 `phase="kernel_crash"`（→ investigate 分支 C 兜底弃权）。**诚实边界**：OCCT 圆角自然崩溃**非隔离可复现**（同进程多半径累积假象，E4 实测修正），故验收用合成信号退出 `tools/test_reproduce_crash.py`，不碰运气触发真崩溃 | 🟡 | P1 |
 | G29 | **Parasolid 失效分类学对照 + STEP 真值资产**（~25 fault token ↔ S0–S6 映射；文档例子 → 实跑验证的 STEP） | ✅ **P0.1 已落地**（2026-07-02）：`cases/models/` 6 个 STEP + manifest（每个经隔离 FreeCADCmd 实跑验证 + 读回边号核定）；4 个进 eval（E2/E3/E4/E5）。完整对照表 + 补足计划见 `../docs/fillet-para-study-and-agent-gap-plan.md` §3/§4。⏳ 未覆盖：chamfer/变半径（P3.2）；~~S4 顶点~~/~~B-surface~~ ✅ 2026-07-02③ 经**假绿路径**双双开张（E7 S4-endcap / E8 S2-bsurf，决策空间② G30）——NotDone 型 S4/bsurf 现场仍未获（负结果见 test_investigate_vertex/WP2） | 🟠 | P0 |
