@@ -21,6 +21,29 @@ freecad/                  工作区配置、脚本与文档（本仓库）
 
 也就是说，**本仓库的全新 clone 只包含配置层加上 `occ-debug-mesh` 工具**，不含 FreeCAD、OCCT 或 Print 源码。按[从全新克隆引导环境](#从全新克隆引导环境)把它变成可构建、可调试的环境。本 kit 如何喂给 Print viewer，见[架构与 Print 依赖](#架构与-print-依赖)。
 
+## 项目现状总览
+
+本工作区是一套 **FreeCAD / OCCT 圆角失败根因诊断** 的完整栈——从可复现构建、几何采集，到自动化的根因诊断 agent 与量化 eval。四层子系统各自的成熟度：
+
+| 子系统 | 落点 | 状态 |
+| --- | --- | --- |
+| 环境 / 构建层 | pinned forks + pixi + 幂等 `scripts/bootstrap.sh` | 成熟：一条命令从裸 clone 到可调试 |
+| 几何工具 | `tools/occ-debug-mesh/`（BREP → mesh/geom/defect + BOP 面面自交校验） | 成熟：60+ 离线断言 + 夹具回归 |
+| Agent（根因回路）+ Eval（量化） | `agent/`（observe→定位→机制→反事实→结论 + 五维打分 + rule/LLM A/B） | v0 投产，13-case；详见 [agent/README.md](agent/README.md) |
+| CI + 护栏 | GitHub Actions 离线单测门 + eval 基线回归门 + `workspace-doctor.sh` | 新落地（见下「最近加固」） |
+
+### 最近一轮加固（2026-07-04，剖析驱动，6 PR #7–#12）
+
+针对"手动断言 / 装饰性代理 / 静默失效"三类隐患的系统性补强：
+
+- **CI + 基线回归门**：接 GitHub Actions 跑 `agent/` 全套离线单测（无 OCCT 干净 SKIP）；`eval/test_baseline.py` 把 baselines 数字**冻结成 CI 断言**（Conclusion 快照重打分），scorer/聚合一漂移即变红。
+- **反事实真分**：eval 的反事实维从"仅判是否携带修法"升为"与 GT 比对的真判别分"（5 维里补掉第一个装饰性代理）。
+- **面面自交检测**：`check_valid` 补 `BOPAlgo_ArgumentAnalyzer`，堵"IsDone + BRepCheck 过但两面互穿"的假绿盲区（reward signal 完整性）——对现有 case 零回归，由基线门确认。
+- **真实模型输入**：`build_shape` 支持 `fcstd:` 直读用户 FreeCAD 文档（从合成 case 跨到真实模型诊断）。
+- **插桩耐久护栏**：`workspace-doctor.sh` 校验 `OCCT_DEBUG_SSI_OUT` 源码改造在源+已装 dylib 在位，把 WP5 静默失效变显式告警。
+
+> 完整路线图、gap register（G1–G30）与逐项进展见 [agent/README.md](agent/README.md)；本次加固每项都经 CI 两版 Python 绿灯 + 基线门零漂移把关后合并。
+
 ## 从全新克隆引导环境
 
 本 kit 的 clone 只含配置层。一条命令把它变成可构建、可调试的环境：
