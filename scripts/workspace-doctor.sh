@@ -80,6 +80,29 @@ else
   pass 'FreeCADCmd and libTKFillet are arm64'
 fi
 
+echo '== WP5 source instrumentation (OCCT_DEBUG_SSI_OUT) =='
+# capture_ssi_env (box-r5 真实 overlap 型 S3 机制证据) 全靠 ChFi3d_Builder_0.cxx 里的
+# OCCT_DEBUG_SSI_OUT 门控写盘改造。fresh clone 漏 commit(c07ae703b7) → 源码缺；occt 被
+# reset/未重装 → 已装 dylib 缺。缺失只让该 capture 退回 untestable（不假绿、核心 agent 照跑）
+# → warn 而非 fail，但把此前的静默失效显式报出（O3）。
+SSI_SRC="$OCC_DIR/src/ChFi3d/ChFi3d_Builder_0.cxx"
+if grep -Fq 'OCCT_DEBUG_SSI_OUT' "$SSI_SRC" 2>/dev/null; then
+  pass 'OCCT fork source carries OCCT_DEBUG_SSI_OUT'
+else
+  warn "OCCT fork source lacks OCCT_DEBUG_SSI_OUT ($SSI_SRC) — 核对 fork 分支/commit c07ae703b7；capture_ssi_env 将退回 untestable"
+fi
+
+SSI_LIB=$(ls "$LOCAL_OCC_LIB"/libTKFillet*.dylib 2>/dev/null | head -n 1)
+if [ -z "$SSI_LIB" ]; then
+  : # 库缺失已由上面 'Local debug libTKFillet' 检查覆盖，这里不重复报
+elif ! command -v strings >/dev/null 2>&1; then
+  warn 'strings 不可用，无法校验 libTKFillet 是否含 OCCT_DEBUG_SSI_OUT'
+elif strings "$SSI_LIB" 2>/dev/null | grep -Fq 'OCCT_DEBUG_SSI_OUT'; then
+  pass 'Installed libTKFillet carries OCCT_DEBUG_SSI_OUT'
+else
+  warn "Installed libTKFillet lacks OCCT_DEBUG_SSI_OUT ($SSI_LIB) — 重跑 scripts/rebuild-occ.sh；capture_ssi_env 将退回 untestable"
+fi
+
 echo '== Configuration hygiene =='
 if git -C "$FC_DIR" diff --quiet -- CMakePresets.json; then
   pass 'Shared FreeCAD CMakePresets.json is clean'
