@@ -50,15 +50,53 @@ def _summary_line(stdout: str) -> str:
     return ""
 
 
-def check_valid(brep_path: str, *, timeout_s: int = 30) -> ValidityReport:
+def _report_to_dict(r: ValidityReport) -> dict:
+    return {"valid": r.valid, "self_intersections": r.self_intersections,
+            "invalid_subshapes": r.invalid_subshapes, "g1_violations": r.g1_violations, "notes": r.notes}
+
+
+def _report_from_dict(d: dict) -> ValidityReport:
+    return ValidityReport(valid=d["valid"], self_intersections=d.get("self_intersections", []),
+                          invalid_subshapes=d.get("invalid_subshapes", []),
+                          g1_violations=d.get("g1_violations", []), notes=d.get("notes", ""))
+
+
+def check_valid(brep_path: str, *, timeout_s: int = 30,
+                backend: str | None = None, record_dir: str | None = None) -> ValidityReport:
     """跑 occ-debug-mesh 的 BRepCheck 缺陷遍历 → 结构化有效性判据。
 
     工具失败（超时 / 非零退出 / 无 sidecar）一律判 valid=False 并在 notes 说明，
     绝不把"工具崩了"静默当成"几何有效"。
+
+    backend/record_dir（P1b C1）：默认读 REPRO_BACKEND/REPRO_RECORD_DIR 环境（eval-wide 开关）。
+    replay 按 **brep 内容哈希** 寻址录制 fixture（brep 落 per-run tmp、路径不稳、内容才稳）→ 无 OCCT
+    离线复现。replay-miss 抛 FixtureNotRecorded（→ runner ERROR 非 SKIP，漏录不静默）。
     """
+    from agent.tools import _fixtures as fx
+    backend = fx.resolve_backend(backend)
+    record_dir = fx.resolve_record_dir(record_dir)
     brep = Path(brep_path)
     if not brep.exists():
         raise FileNotFoundError(f"BREP 不存在：{brep}")
+    key = {"brep": fx.content_hash(brep)}
+
+    if backend == "replay":
+        if not record_dir:
+            raise ValueError("check_valid replay 需 record_dir/REPRO_RECORD_DIR")
+        fp = fx.fixture_path(record_dir, "check_valid", key)
+        if not fp.exists():
+            raise fx.FixtureNotRecorded(f"无录制 check_valid fixture：{fp.name}")
+        return _report_from_dict(fx.load(fp))
+    if backend != "real":
+        raise ValueError(f"未知 backend：{backend}")
+
+    report = _check_valid_real(brep, timeout_s)
+    if record_dir:
+        fx.dump(fx.fixture_path(record_dir, "check_valid", key), _report_to_dict(report))
+    return report
+
+
+def _check_valid_real(brep: Path, timeout_s: int) -> ValidityReport:
     bin_path = _resolve_bin()
 
     with tempfile.TemporaryDirectory(prefix="check_valid_") as d:

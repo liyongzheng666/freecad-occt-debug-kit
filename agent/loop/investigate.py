@@ -57,10 +57,10 @@ def _single_edge_index(edges):
         return None
 
 
-def _observe(case, r, out_dir, sink, verbose, tolerance=None, edges=None):
+def _observe(case, r, out_dir, sink, verbose, tolerance=None, edges=None, op="fillet"):
     """reproduce + 记一条 ToolResult。tolerance：WP3 互斥反事实，只动容差不动半径（None=不动）。
-    edges：G26 单/多边聚焦，透传 reproduce（None=全部边，向后兼容）。"""
-    run = reproduce(case, radius=r, tolerance=tolerance, out_dir=out_dir, edges=edges)
+    edges：G26 单/多边聚焦，透传 reproduce（None=全部边，向后兼容）。op：P1a 域轴，透传 reproduce。"""
+    run = reproduce(case, radius=r, tolerance=tolerance, out_dir=out_dir, edges=edges, op=op)
     tag = f"r={r}" + (f" tol={tolerance}" if tolerance is not None else "")
     sink.append(ToolResult(
         tool="reproduce", ok=(run.status == "ok"),
@@ -88,20 +88,20 @@ def _validate(brep, sink, verbose):
     return v
 
 
-def _is_feasible(case, r, out_dir, sink, verbose, tolerance=None, edges=None):
-    """可行 = reproduce 跑完产形状 且 check_valid 判有效（S6，非 IsDone）。tolerance/edges 见 _observe。"""
-    run = _observe(case, r, out_dir, sink, verbose, tolerance=tolerance, edges=edges)
+def _is_feasible(case, r, out_dir, sink, verbose, tolerance=None, edges=None, op="fillet"):
+    """可行 = reproduce 跑完产形状 且 check_valid 判有效（S6，非 IsDone）。tolerance/edges/op 见 _observe。"""
+    run = _observe(case, r, out_dir, sink, verbose, tolerance=tolerance, edges=edges, op=op)
     if run.status != "ok" or not run.is_done or not run.bad_shape:
         return False
     return _validate(run.bad_shape, sink, verbose).valid
 
 
-def _probe_feasible_bound(case, requested, out_dir, sink, verbose, edges=None):
-    """降序探阶梯，返回 (首个可行半径 or None, 其上方最小不可行半径)。edges：G26 聚焦透传。"""
+def _probe_feasible_bound(case, requested, out_dir, sink, verbose, edges=None, op="fillet"):
+    """降序探阶梯，返回 (首个可行半径 or None, 其上方最小不可行半径)。edges：G26 聚焦透传。op：域轴透传。"""
     prev_infeasible = requested  # requested 已知不可行
     for f in _CF_FRACTIONS:
         r = round(requested * f, 4)
-        if _is_feasible(case, r, out_dir, sink, verbose, edges=edges):
+        if _is_feasible(case, r, out_dir, sink, verbose, edges=edges, op=op):
             return r, prev_infeasible
         prev_infeasible = r
     return None, prev_infeasible
@@ -111,11 +111,27 @@ def _probe_feasible_bound(case, requested, out_dir, sink, verbose, edges=None):
 _CF_TOLERANCES = [0.001, 0.01, 0.1]
 
 
-def _probe_tolerance_fix(case, requested, out_dir, sink, verbose, edges=None):
-    """同半径只扰容差（升序阶梯）→ 首个能恢复有效实体(S6)的容差 or None（None=容差修法无效）。edges：G26 聚焦透传。"""
+def _probe_tolerance_fix(case, requested, out_dir, sink, verbose, edges=None, op="fillet"):
+    """同半径只扰容差（升序阶梯）→ 首个能恢复有效实体(S6)的容差 or None（None=容差修法无效）。edges/op 透传。"""
     for tol in _CF_TOLERANCES:
-        if _is_feasible(case, requested, out_dir, sink, verbose, tolerance=tol, edges=edges):
+        if _is_feasible(case, requested, out_dir, sink, verbose, tolerance=tol, edges=edges, op=op):
             return tol
+    return None
+
+
+def _mechanism_signature_from(verdicts, failure_class):
+    """从判别裁定 + 失效类别推出**机制签名**（P1b，供 scorer 对 GT.mechanism_truth 打真分）。
+
+    ssi 腿 fired（面面求交退化：期望 contact 实得 0 → s3_signature）→ "s3_degenerate_contact"；
+    否则 S2 几何族（近切/曲率，滚球坐不住起始解）→ "s2_rolling_ball_infeasible"；其余（overflow
+    等无明确机制观测量）→ None（不硬造机制 → scorer 该维 None）。纯函数、只读已跑裁定，不改决策。
+    """
+    ssi_fired = any(c.get("localize", {}).get("tool") == "ssi_probe" and st == "fired"
+                    for c, st, _ in verdicts)
+    if ssi_fired:
+        return "s3_degenerate_contact"
+    if failure_class in ("geometric_near_tangent", "geometric_curvature"):
+        return "s2_rolling_ball_infeasible"
     return None
 
 
@@ -137,21 +153,21 @@ def _counterfactual_verdict(lower_radius_ok: bool, tol_fix):
 
 # ---- 决策表驱动定位（playbook：症状 → 候选 → 判别器）--------------------------
 
-def _run_discriminator(case, radius, cand, out, sink, verbose, edges=None):
+def _run_discriminator(case, radius, cand, out, sink, verbose, edges=None, op="fillet"):
     """跑一个候选的 localize 判别器，返回 (status, evidence_str)。
 
     status ∈ {"fired"(命中该阶段) | "ruled_out"(排除) | "untestable"(此处无法运行)}。
-    edges：G26 单/多边聚焦，透传到 radius_probe（S0 export-only 分支不理边、故不传）。
+    edges：G26 单/多边聚焦，透传到 radius_probe（S0 export-only 分支不理边、故不传）。op：域轴透传。
     """
     tool = cand.get("localize", {}).get("tool")
-    if tool == "check_valid_input":                        # S0：输入几何是否本就无效（radius=0 导出，忽略 edges）
+    if tool == "check_valid_input":                        # S0：输入几何是否本就无效（radius=0 导出，忽略 edges/op）
         base = reproduce(case, radius=0.0, out_dir=out)
         if not base.bad_shape:
             return "untestable", "无法导出输入几何"
         valid = _validate(base.bad_shape, sink, verbose).valid
         return ("ruled_out", "输入 check_valid 通过") if valid else ("fired", "输入 check_valid 不通过")
-    if tool == "radius_probe":                             # S2：降半径能否恢复有效实体
-        feas_r, infeas_floor = _probe_feasible_bound(case, radius, out, sink, verbose, edges=edges)
+    if tool == "radius_probe":                             # S2：降半径/降距能否恢复有效实体
+        feas_r, infeas_floor = _probe_feasible_bound(case, radius, out, sink, verbose, edges=edges, op=op)
         if feas_r is not None:
             return "fired", f"降半径恢复有效实体，可行上界 ∈ [{feas_r}, {infeas_floor})"
         return "ruled_out", "降半径阶梯内无可行半径"
@@ -241,14 +257,14 @@ def _falsegreen_fallback_hyp(run, v) -> CausalHypothesis:
     )
 
 
-def _diagnose_false_green(case, radius, run, v, sink, verbose, policy="rule", traj=None, edges=None) -> Conclusion:
+def _diagnose_false_green(case, radius, run, v, sink, verbose, policy="rule", traj=None, edges=None, op="fillet") -> Conclusion:
     """假绿路径的决策表诊断（决策空间②）：falsegreen_probe 一次采集 → policy.decide 逐候选。
 
     无签名/probe 失败/全候选未命中 → 兜底 `_falsegreen_fallback_hyp`（原启发式逐位一致）。
     命中 → root=最 distal fired，chain=[root, S6]（S6=检出点），confidence/depth/entities
-    与兜底同构（0.65 / self_x→entity / 缺陷 refs），保证打分维度对旧 case 逐位不变。
+    与兜底同构（0.65 / self_x→entity / 缺陷 refs），保证打分维度对旧 case 逐位不变。op：选 {op}-failures 表。
     """
-    node = query_playbook({"exception": "", "phase": "false_green", "is_done": run.is_done})
+    node = query_playbook({"exception": "", "phase": "false_green", "is_done": run.is_done}, op=op)
     if node is None:
         return Conclusion(hypotheses=[_falsegreen_fallback_hyp(run, v)])
     _log(verbose, f"playbook 命中 {node['id']}（假绿决策空间），policy={policy} 逐候选判别")
@@ -528,20 +544,21 @@ def _investigate_fixture_ssi(case_id: str, fixture: str, sink, verbose) -> Concl
         localization_depth="stage",
         confidence=0.75,
         counterfactual="heal 近切支撑面使接触曲线非退化；fixture 路径（合成，非真实 fillet 失败现场）",
+        mechanism_signature="s3_degenerate_contact",   # P1b：面面求交退化（section_edges=0）
         evidence=[Evidence(f"fixture ssi_probe({fixture!r})：{ev}", source="agent/tools/ssi_probe.py")],
         failure_class="algorithmic_overflow",
     )])
 
 
-def _diagnose_via_playbook(case, radius, run, out, sink, verbose, policy="rule", traj=None, edges=None) -> Conclusion:
+def _diagnose_via_playbook(case, radius, run, out, sink, verbose, policy="rule", traj=None, edges=None, op="fillet") -> Conclusion:
     """按 symptom 命中 playbook 节点 → policy.decide 选判别器逐个跑 → 确定性合成结论。edges：G26 聚焦透传。
 
     决策（跑哪个候选 / 何时收）走 `decide(state)` 接缝（policy=rule|llm）；结论合成（取最
     distal 命中者为根 + 失效三态细分）是决策之后的确定性后处理。rule 臂 = 顺序穷尽候选，
-    与改造前 for-loop 等价（eval 数字不变即回归通过）。
+    与改造前 for-loop 等价（eval 数字不变即回归通过）。op：P1a 域轴——选 {op}-failures 表 + 透传判别器。
     """
     sig = {"exception": run.exception or "", "phase": run.phase, "is_done": run.is_done}
-    node = query_playbook(sig)
+    node = query_playbook(sig, op=op)
     if node is None:
         return Conclusion(abstained=True,
                           abstain_reason=f"无 playbook 节点匹配 symptom（exc={run.exception}, phase={run.phase}）")
@@ -558,7 +575,7 @@ def _diagnose_via_playbook(case, radius, run, out, sink, verbose, policy="rule",
         if action.get("conclude"):
             break
         cand = action["run"]
-        status, ev = _run_discriminator(case, radius, cand, out, sink, verbose, edges=edges)
+        status, ev = _run_discriminator(case, radius, cand, out, sink, verbose, edges=edges, op=op)
         verdicts.append((cand, status, ev))
         if traj is not None:
             traj.append({"t": "verdict", "stage": cand["stage"],
@@ -589,7 +606,7 @@ def _diagnose_via_playbook(case, radius, run, out, sink, verbose, policy="rule",
         salv = info.get("salvageable")
         # WP3 第三腿：互斥反事实。radius_probe 已 fired → 降半径有效；再跑 perturb_tolerance
         # （不动半径），两修法成功组合判别 S2 / S3 / S2→S3（root-cause §4 腿3）。
-        tol_fix = _probe_tolerance_fix(case, radius, out, sink, verbose, edges=edges)
+        tol_fix = _probe_tolerance_fix(case, radius, out, sink, verbose, edges=edges, op=op)
         cf_label, cf_why = _counterfactual_verdict(True, tol_fix)
         cf_verdict = cf_label                # C1：结构化挂到 hypothesis 供 scorer vs GT 打真分
         _log(verbose, f"  互斥反事实 [{cf_label}]：{cf_why}")
@@ -618,12 +635,14 @@ def _diagnose_via_playbook(case, radius, run, out, sink, verbose, policy="rule",
     # 命名到具体实体 → 定位深度记 entity；否则止于 stage（如 box overflow：句柄埋匿名 DStr，
     # capture 未必救得了，可能永久止于 stage——非待兑现的 ~1.00，见 README WP4②）
     depth = "entity" if entities else "stage"
+    mech_sig = _mechanism_signature_from(verdicts, failure_class)   # P1b：机制签名（scorer vs GT 打真分）
     return Conclusion(hypotheses=[CausalHypothesis(
         stage=root, chain=chain, cause=cause,
         entities=entities,
         localization_depth=depth, confidence=conf,
         counterfactual=counterfactual,
         counterfactual_verdict=cf_verdict,
+        mechanism_signature=mech_sig,
         evidence=evidence,
         failure_class=failure_class,
     )])
@@ -641,8 +660,13 @@ def investigate(
     trajectory: list | None = None,
     verbose: bool = False,
     edges: str | None = None,
+    op: str = "fillet",
 ) -> Conclusion:
     """policy: "rule"(A3 规则版下限基线) | "llm"(A5)。返回分级因果结论。
+
+    op: P1a 域轴——"fillet"(默认) | "chamfer"。选 {op}-failures.json 决策表 + 透传 reproduce 的
+    makeFillet/makeChamfer 驱动。判别器（triage 近切/曲率、ssi、falsegreen）本体 op-无关、原样复用；
+    只有 reproduce 调用 + playbook 选表带 op。省略 → fillet（所有既有 case 逐位不变）。
 
     ssi_fixture: 合成 fixture 路径（A7 WP3）——当 case 的 agent_run 含 ssi_fixture 字段时，跳过
     reproduce/playbook/radius_probe，直接跑 ssi_probe(fixture=ssi_fixture)。用于在 eval 路径覆盖
@@ -666,7 +690,7 @@ def investigate(
             raise ValueError("decide policy 需要 radius")
         out = out_dir or tempfile.mkdtemp(prefix="investigate_")
         sink = trace if trace is not None else []
-        conclusion = _investigate_loop(case_id, float(radius), out, sink, verbose, policy, trajectory, edges=edges)
+        conclusion = _investigate_loop(case_id, float(radius), out, sink, verbose, policy, trajectory, edges=edges, op=op)
 
     if trajectory is not None:                            # 末步：结论（供离线重放重打分）
         from agent.trajectory import conclusion_to_dict
@@ -680,17 +704,18 @@ def investigate(
     return conclusion
 
 
-def _investigate_loop(case, radius, out, sink, verbose, policy="rule", traj=None, edges=None) -> Conclusion:
-    _log(verbose, f"observe: reproduce {case} @ r={radius}" + (f" edges={edges}" if edges else ""))
-    run = _observe(case, radius, out, sink, verbose, edges=edges)
+def _investigate_loop(case, radius, out, sink, verbose, policy="rule", traj=None, edges=None, op="fillet") -> Conclusion:
+    _log(verbose, f"observe: reproduce {case} @ r={radius}"
+                  + (f" op={op}" if op != "fillet" else "") + (f" edges={edges}" if edges else ""))
+    run = _observe(case, radius, out, sink, verbose, edges=edges, op=op)
     if traj is not None:
-        traj.append({"t": "observe", "case": case, "radius": radius, "policy": policy,
+        traj.append({"t": "observe", "case": case, "radius": radius, "policy": policy, "op": op,
                      "run_end": {"status": run.status, "exception": run.exception,
                                  "phase": run.phase, "is_done": run.is_done}})
 
     # —— 分支 A：算法没跑完（典型 StdFail_NotDone）→ policy.decide 驱动逐候选判别 ——
     if run.status != "ok" and run.phase == "fillet_notdone":
-        return _diagnose_via_playbook(case, radius, run, out, sink, verbose, policy, traj, edges=edges)
+        return _diagnose_via_playbook(case, radius, run, out, sink, verbose, policy, traj, edges=edges, op=op)
 
     # —— 分支 B：跑完产出形状 → 复判有效性 ——
     if run.status == "ok" and run.bad_shape:
@@ -700,10 +725,10 @@ def _investigate_loop(case, radius, out, sink, verbose, policy="rule", traj=None
                 abstained=True,
                 abstain_reason=f"r={radius} 未复现失败：reproduce 跑完且 check_valid 判有效，无缺陷可归因。",
             )
-        # 假绿：IsDone=true 但几何无效 → 决策空间②（playbook fillet-falsegreen-invalid）
+        # 假绿：IsDone=true 但几何无效 → 决策空间②（playbook {op}-falsegreen-invalid）
         # 细分 S2(bsurf 支撑)/S3(中段自交)/S4(端盖构造)；无签名/probe 失败/全未命中 →
         # 兜底 _falsegreen_fallback_hyp（原启发式逐位一致，thinplate/E4 回归保护）。
-        return _diagnose_false_green(case, radius, run, v, sink, verbose, policy, traj, edges=edges)
+        return _diagnose_false_green(case, radius, run, v, sink, verbose, policy, traj, edges=edges, op=op)
 
     # —— 分支 C：基础设施/harness 级失败 ——
     return Conclusion(

@@ -44,6 +44,19 @@ def build_shape(case):
         return Part.Face(Part.makePolygon(pts + [pts[0]])).extrude(V(0, 8, 0))
     if case == "pocket":
         return Part.makeBox(16, 16, 10).cut(Part.makeCylinder(3, 8, V(8, 8, 3)))
+    # P0 规模化参数化族（与 _fillet_harness.build_shape 逐字对齐；两 harness 各留一份）。
+    if scheme in ("boxp", "pocketp", "wedgep"):
+        nums = [float(x) for x in case.split(":", 1)[1].split(",") if x.strip()]
+        if scheme == "boxp":
+            lx, ly, lz = nums
+            return Part.makeBox(lx, ly, lz)
+        if scheme == "pocketp":
+            bx, by, bz, rc = nums
+            return Part.makeBox(bx, by, bz).cut(
+                Part.makeCylinder(rc, bz * 0.8, V(bx / 2, by / 2, bz * 0.3)))
+        length, tip, width = nums
+        pts = [V(0, 0, 0), V(length, 0, 0), V(length, 0, tip)]
+        return Part.Face(Part.makePolygon(pts + [pts[0]])).extrude(V(0, width, 0))
     raise ValueError("unknown case " + str(case))
 
 

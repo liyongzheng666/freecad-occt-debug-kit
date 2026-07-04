@@ -18,6 +18,12 @@
     "expected_evidence": "ssi_probe(fixture='near-tangent')：近切夹角<5° + section_edges=0 → s3_signature=true → S3 fired",
     "aligned_fix": "heal 近切支撑面使接触曲线非退化（增大二面角），或降半径至 blend 面能与两支撑面正常接触",
     "failure_class": "algorithmic_overflow",
-    "_failure_class_note": "fixture 代表 blend 面接触退化型 S3（PerformSurf 内求交失败），与 box-r5 的 StripeEdgeInter 2D pcurve overlap 同属 algorithmic_overflow 大类。"
+    "_failure_class_note": "fixture 代表 blend 面接触退化型 S3（PerformSurf 内求交失败），与 box-r5 的 StripeEdgeInter 2D pcurve overlap 同属 algorithmic_overflow 大类。",
+    "mechanism_truth": {
+      "signature": "s3_degenerate_contact",
+      "observable": { "n_section_edges": 0, "s3_signature": true },
+      "basis": "合成 fixture（诚实标注非真实失败现场）：ssi_probe 近切<5° + section_edges=0 → S3 接触退化。P1b 机制真分（此 case 的机制真值来自 fixture 定义，非 truth-run 抓取）。",
+      "stage_reached": "S3"
+    }
   }
 }

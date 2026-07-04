@@ -44,6 +44,27 @@ def build_shape(case):
         if not cands:
             raise ValueError(f"FCStd 无可用 solid（{objname or '任意对象'}）：{path}")
         return cands[-1].Shape                   # 默认最后一个带 solid 的对象
+    # P0 规模化：参数化几何族——把 box/pocket/wedge 三个已验证 builder 的**尺寸/半径**开成
+    # 可扫描参数，供 eval/gen_cases.py 批量造 100+ case（GT 走几何第一性，见 gen_cases 文档）。
+    # 形状构造逐字对齐下方定值 builder（同族同几何），只把常量换成参数——不引入新失效物理。
+    if scheme in ("boxp", "pocketp", "wedgep"):
+        nums = [float(x) for x in case.split(":", 1)[1].split(",") if x.strip()]
+        if scheme == "boxp":                     # boxp:LX,LY,LZ —— 对齐 "box"（overflow 族）
+            lx, ly, lz = nums
+            return Part.makeBox(lx, ly, lz)
+        if scheme == "pocketp":                  # pocketp:BX,BY,BZ,RC —— 对齐 "pocket"（曲率族）
+            bx, by, bz, rc = nums
+            import FreeCAD as App
+            V = App.Vector
+            # 盲孔比例对齐定值 pocket（16,16,10,rc=3 → base z=BZ*0.3, 高=BZ*0.8）；凹壁曲率半径=RC
+            return Part.makeBox(bx, by, bz).cut(
+                Part.makeCylinder(rc, bz * 0.8, V(bx / 2, by / 2, bz * 0.3)))
+        # wedgep:LEN,TIP,WIDTH —— 对齐 "wedge"（近切族）；二面角≈atan(TIP/LEN)
+        length, tip, width = nums
+        import FreeCAD as App
+        V = App.Vector
+        pts = [V(0, 0, 0), V(length, 0, 0), V(length, 0, tip)]
+        return Part.Face(Part.makePolygon(pts + [pts[0]])).extrude(V(0, width, 0))
     if case == "box":
         return Part.makeBox(10, 20, 30)          # 经典盒子；最短边 10
     if case == "box-flat":
@@ -100,14 +121,22 @@ def main():
             if tol:                                   # WP3 互斥反事实：只动容差、不动半径
                 shape.fixTolerance(float(tol))
             edges = select_edges(shape, os.environ.get("REPRO_EDGES", ""))
+            # P1a：op 轴——fillet(默认，makeFillet(radius,edges)) | chamfer(makeChamfer(dist,edges)，
+            # 或 REPRO_DIST2 时双距 makeChamfer(d1,d2,edges))。radius 即倒角距离（不改名避免调用方 churn）。
+            op = os.environ.get("REPRO_OP", "fillet")
+            dist2 = os.environ.get("REPRO_DIST2")
             try:
-                filleted = shape.makeFillet(radius, edges)
+                if op == "chamfer":
+                    built = (shape.makeChamfer(radius, float(dist2), edges) if dist2
+                             else shape.makeChamfer(radius, edges))
+                else:
+                    built = shape.makeFillet(radius, edges)
                 result["is_done"] = True
                 if out_brep:
-                    filleted.exportBrep(out_brep)
+                    built.exportBrep(out_brep)
                     result["bad_shape"] = out_brep
                 result["status"] = "ok"          # 跑完产出形状；有效性留给 check_valid
-            except Exception as e:                # fillet 算法失败（典型 StdFail_NotDone）
+            except Exception as e:                # 算法失败（典型 StdFail_NotDone，fillet/chamfer 同串）
                 result["is_done"] = False
                 result["exception"] = type(e).__name__ + ": " + str(e)
                 result["phase"] = phase_of(str(e))

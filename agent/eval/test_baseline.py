@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 
-from agent.eval.runner import _abstention_summary, _aggregate, _discover_cases
+from agent.eval.runner import _abstention_summary, _aggregate, _discover_cases, _health
 from agent.eval.snapshot import _SNAP, build_row, strip_wall
 from agent.trajectory import conclusion_from_dict
 
@@ -39,6 +39,17 @@ def _diff_layer(got: dict, exp: dict, fails: list, ctx: str) -> None:
 
 
 def main() -> int:
+    # run 健康门（Part 7 幸存者偏差修）：纯函数、离线可测。ERROR 是 harness 崩、SKIP 是环境缺件。
+    _hfail = []
+    _hc = lambda n, c: (_hfail.append(n) if not c else None)  # noqa: E731
+    _hc("全 OK → 可信", _health([{"status": "OK"}] * 13)["trustworthy"] is True)
+    _hc("8 OK+5 ERROR → 不可信（幸存者偏差）", _health([{"status": "OK"}] * 8 + [{"status": "ERROR"}] * 5)["trustworthy"] is False)
+    _hc("6 OK+7 SKIP → 可信（SKIP=环境缺件非 harness 崩）", _health([{"status": "OK"}] * 6 + [{"status": "SKIP"}] * 7)["trustworthy"] is True)
+    _hc("13 OK+1 ERROR(7%<10%阈) → 可信", _health([{"status": "OK"}] * 13 + [{"status": "ERROR"}])["trustworthy"] is True)
+    if _hfail:
+        print(f"{len(_hfail)} FAILED（health 门）: " + " / ".join(_hfail))
+        return 1
+
     if not _SNAP.exists():
         print(f"SKIP: 无快照 {_SNAP.name}（先 python -m agent.eval.snapshot 生成，需 FreeCADCmd）")
         return 0

@@ -14,13 +14,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-_TABLE = Path(__file__).resolve().parents[1] / "playbook" / "fillet-failures.json"
+_PLAYBOOK_DIR = Path(__file__).resolve().parents[1] / "playbook"
 
 
-def _load_nodes() -> list[dict]:
-    if not _TABLE.exists():
+def _load_nodes(op: str = "fillet") -> list[dict]:
+    """读 {op}-failures.json（P1a 域轴：fillet 默认 / chamfer 等）。缺表 → []（→ query 返回 None）。"""
+    table = _PLAYBOOK_DIR / f"{op}-failures.json"
+    if not table.exists():
         return []
-    data = json.loads(_TABLE.read_text(encoding="utf-8"))
+    data = json.loads(table.read_text(encoding="utf-8"))
     if isinstance(data, list):
         return data
     return data.get("signatures", [])
@@ -37,9 +39,9 @@ def _matches(symptom: dict, signature: dict) -> bool:
     return True
 
 
-def query_playbook(signature: dict) -> dict | None:
-    """signature: {exception, phase, is_done, ...}。返回首个命中的节点或 None。"""
-    for node in _load_nodes():
+def query_playbook(signature: dict, op: str = "fillet") -> dict | None:
+    """signature: {exception, phase, is_done, ...}。op 选 {op}-failures 表。返回首个命中的节点或 None。"""
+    for node in _load_nodes(op):
         if _matches(node.get("symptom", {}), signature):
             return node
     return None

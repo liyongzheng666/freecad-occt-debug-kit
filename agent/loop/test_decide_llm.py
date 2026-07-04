@@ -66,6 +66,21 @@ def main() -> int:
           _action_from_raw({"run_stage": "S2"}, full_unrun).get("run", {}).get("stage") == "S2")
     check("replay conclude", _action_from_raw({"conclude": True}, full_unrun) == {"conclude": True})
 
+    # 9) replay miss 抛 DecisionNotRecorded（非 FileNotFoundError）→ runner 归 ERROR 不是 SKIP（Part 7 修）
+    import tempfile
+    from agent.loop.decide_llm import _replay, DecisionNotRecorded
+    check("DecisionNotRecorded 不是 FileNotFoundError 子类（否则被 runner 当 SKIP 吞掉）",
+          not issubclass(DecisionNotRecorded, FileNotFoundError))
+    with tempfile.TemporaryDirectory() as d:
+        raised = "none"
+        try:
+            _replay("nosuchsig", d)
+        except DecisionNotRecorded:
+            raised = "DecisionNotRecorded"
+        except FileNotFoundError:
+            raised = "FileNotFoundError"
+        check("replay miss → DecisionNotRecorded（响亮 ERROR，非静默 SKIP）", raised == "DecisionNotRecorded")
+
     print(f"\n{'ALL PASS' if not fails else str(len(fails)) + ' FAILED'}")
     return 1 if fails else 0
 

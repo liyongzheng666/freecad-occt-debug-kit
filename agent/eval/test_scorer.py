@@ -72,10 +72,10 @@ def main() -> int:
     s_miss = score(_concl(S5, [S5]), gt)["detail"]["stage_localization"]
     check("monotone root>in>symptom>miss", s_root > s_in > s_sym > s_miss)
 
-    # 6) 机制深度代理：mechanism 深 > stage 浅
-    deep = score(_concl(S0, [S0, S3], depth="mechanism"), gt)["mechanism"]
-    shallow = score(_concl(S0, [S0, S3], depth="stage"), gt)["mechanism"]
-    check("mechanism depth proxy deep>shallow", deep > shallow)
+    # 6) 机制维已升为真分（P1b）：无 mechanism_truth 的 gt → None（不再是深度代理）。
+    #    1.0/0.0/None 分档见 test_mechanism_score（这里只守"不再看 localization_depth"）。
+    check("mechanism 无真值 → None（非深度代理）",
+          score(_concl(S0, [S0, S3], depth="mechanism"), gt)["mechanism"] is None)
 
     # 7) 校准：置信度=正确性 → 1.0；过度自信 → 掉分
     aligned = score(_concl(S0, [S0, S3], conf=1.0), gt)["calibration"]  # stage_loc=1.0

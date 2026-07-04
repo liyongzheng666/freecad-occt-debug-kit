@@ -26,6 +26,15 @@ import subprocess
 
 _MODEL = os.environ.get("AGENT_DECIDE_MODEL", "claude-opus-4-8")
 
+
+class DecisionNotRecorded(RuntimeError):
+    """replay 后端遇未录制决策时抛此（**刻意不继承 FileNotFoundError**）。
+
+    这样 runner 的 `except FileNotFoundError → SKIP` 不会吞它，它落到 `except Exception → ERROR`：
+    一个漏录的决策是**响亮的、被计数的失败**，不会被静默当成"环境缺件 SKIP"而掉出打分均值
+    （那正是幸存者偏差型撒谎 eval）。见 INTERVIEW-PREP Part 7 / runner._health。
+    """
+
 _SYSTEM = (
     "You are a root-cause investigation policy for CAD fillet failures. "
     "Given the structured evidence so far and a decision-table node listing candidate "
@@ -85,7 +94,16 @@ def _parse_action(text: str, unrun: list[dict]) -> dict:
 
 
 def _signature(state: dict) -> str:
-    """state 的确定性签名（节点 + 已跑候选+裁定）——record/replay 的 key。"""
+    """state 的确定性签名（节点 + 已跑候选+裁定）——record/replay 的 key。
+
+    **不变式**：签名必须含决策**实际依赖的每一项、且仅含这些**。今天 LLM 只看
+    `_build_user_prompt` 暴露的 {症状(exc/phase/is_done)、节点 id、未跑候选、已跑裁定}——
+    radius/tolerance/edges **不进 prompt、决策不依赖它们**，故不进签名。这也正是"同签名跨
+    case 复用录制决策、零重录"的**正解、非 bug**：两 case 只差 radius 但决策依赖项相同时，
+    它们**本就该**得同一决策。
+    ⚠️ 若将来决策空间让候选或决策**依赖** tolerance/edges/radius（如引入 tolerance-level
+    候选），必须把它们加进本签名**并重录**决策，否则会别名到错决策。见 INTERVIEW-PREP Part 7。
+    """
     run = state["run_end"]
     key = json.dumps({
         "node": state["node"]["id"],
@@ -113,7 +131,9 @@ def _claude_cli(system: str, user: str, *, model: str = _MODEL, timeout_s: int =
 def _replay(signature: str, record_dir: str) -> dict:
     fp = os.path.join(record_dir, f"{signature}.json")
     if not os.path.exists(fp):
-        raise FileNotFoundError(f"无录制决策：{fp}（先用 claude_cli 后端跑一遍录制）")
+        # 未录制 ≠ 环境缺件：抛 DecisionNotRecorded（非 FileNotFoundError）→ runner 归 ERROR 非 SKIP。
+        raise DecisionNotRecorded(
+            f"无录制决策：{fp}（先用 claude_cli 后端跑一遍录制；replay miss 记 ERROR，不静默 SKIP）")
     with open(fp, encoding="utf-8") as f:
         return json.load(f)["action_raw"]
 

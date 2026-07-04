@@ -20,7 +20,7 @@ from agent.tools.reproduce import _resolve_freecadcmd
 _HARNESS = Path(__file__).resolve().parent / "_triage_harness.py"
 
 
-def triage_input(case_id: str, *, near_tangent_eps_deg: float = 10.0, timeout_s: int = 60,
+def triage_input(case_id: str, *, near_tangent_eps_deg: float = 10.0, timeout_s: int | None = None,
                  edge_index: int | None = None, edges: str | None = None) -> TriageReport:
     """跑 triage harness → TriageReport（min_dihedral_deg / min_support_curv_radius / near_tangent_pairs）。
 
@@ -29,6 +29,8 @@ def triage_input(case_id: str, *, near_tangent_eps_deg: float = 10.0, timeout_s:
     edges：P2.2 vertex_probe——逗号 1-based blend 目标边集（"9,12"），透传 TRIAGE_EDGES，
     决定 vertex_report 的 n_blended；None → 全部边视为 blend（与 reproduce 无 REPRO_EDGES 一致）。
     """
+    if timeout_s is None:                               # per-subprocess 预算：REPRO_TIMEOUT_S（P0 沙箱）→ 60（旧默认）
+        timeout_s = int(os.environ.get("REPRO_TIMEOUT_S", "60"))
     bin_path = _resolve_freecadcmd()
     with tempfile.TemporaryDirectory(prefix="triage_") as d:
         out_json = Path(d) / "triage.json"

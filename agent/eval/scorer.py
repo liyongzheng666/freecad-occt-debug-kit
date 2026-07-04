@@ -9,7 +9,7 @@
   | --- | --- | --- |
   | 定位 localization | ✅ 全量自动判（因果链部分得分 + 实体召回） | 仅需 GT.true_chain（已有） |
   | 失效分类 failure_class | ✅ 全量自动判（三态精确匹配） | GT.failure_class + 结论结构化 failure_class（已有） |
-  | 机制 mechanism    | ⚠️ 仅深度代理 | 真值需 truth-run 中间态（交线条数等），A8 接 |
+  | 机制 mechanism    | ✅ 真分（P1b）：预测机制签名 vs GT.mechanism_truth | 有 mechanism_truth 的 case（4/13：box-r5/wedge-sliver/pocket/s3-fixture）；无 → None（不冒充） |
   | 反事实 counterfactual | ✅ 真分（C1）：互斥判别 verdict vs GT 根 | investigate 已真跑降半径×扰容差；该腿未执行 → None |
   | 校准 calibration  | ✅ 单 case 置信-正确对齐；弃权精度是集合量，runner 汇总 | — |
 
@@ -26,9 +26,6 @@ _HIT_ROOT_AS_ROOT = 1.0
 _HIT_ROOT_IN_CHAIN = 0.7
 _HIT_SYMPTOM_ONLY = 0.4
 _MISS = 0.0
-
-# 机制深度代理：定位站到多深（真机制正确性待 truth-run 中间态）
-_MECH_DEPTH_PROXY = {"mechanism": 1.0, "entity": 0.5, "stage": 0.2}
 
 _STAGE_WEIGHT = 0.7
 _ENTITY_WEIGHT = 0.3
@@ -99,6 +96,21 @@ def _counterfactual(pred: CausalHypothesis, gt: GroundTruth) -> float | None:
     if claimed in gt.true_chain:
         return _HIT_SYMPTOM_ONLY
     return _MISS
+
+
+def _mechanism(pred: CausalHypothesis, gt: GroundTruth) -> float | None:
+    """机制维真分（P1b）：pred.mechanism_signature vs GT.mechanism_truth.signature（**非深度代理**）。
+
+    诚实 None（不冒充 0/1）当：① case 无 mechanism_truth；② pred 未声明机制签名（弃权/未跑到判别腿/
+    上游 throw——没跑到那步就产不出签名，故"无签名"已天然覆盖上游 throw，无需再单独 gate stage）。
+    签名匹配 → 1.0；不匹配 → 0.0（错机制是**真 miss**，绝不洗白成 None——同 _failure_class 纪律）。
+    **刻意不设 observable 容差带**：mechanism_truth.observable/stage_reached 是真值的**出处依据**（誊自
+    truth_run/capture_result，供人复核），非独立打分通道——避免"容差带当洗白" (INTERVIEW-PREP Q4/Q12)。
+    """
+    mt = gt.mechanism_truth
+    if not mt or pred.mechanism_signature is None:
+        return None
+    return _HIT_ROOT_AS_ROOT if pred.mechanism_signature == mt.get("signature") else _MISS
 
 
 def _abstention_verdict(gt: GroundTruth, abstained: bool) -> str:
@@ -186,8 +198,8 @@ def score(
     # —— 失效分类（三态精确匹配，全量自动判）——
     failure_class = _failure_class(top, gt)
 
-    # —— 机制（深度代理，真值待 truth-run 中间态）——
-    mechanism = _MECH_DEPTH_PROXY.get(top.localization_depth, 0.0)
+    # —— 机制（P1b 真分：预测机制签名 vs truth-run 中间态；无真值/未声明/上游 throw → None）——
+    mechanism = _mechanism(top, gt)
 
     # —— 反事实（C1 真分：互斥判别 verdict vs GT 根；未执行该腿 → None）——
     counterfactual = _counterfactual(top, gt)
@@ -206,7 +218,10 @@ def score(
         predicted_failure_class=top.failure_class,
         gt_failure_class=gt.failure_class,
         failure_class_basis="三态精确匹配（GT.failure_class vs 结论 failure_class）；None=任一方未标",
-        mechanism_basis="深度代理（localization_depth）；真机制正确性待 truth-run 中间态接入（A8）",
+        mechanism_basis=(
+            "真分（P1b）：预测机制签名(%s) vs GT.mechanism_truth；无真值/未声明/上游 throw → None（不冒充）"
+            % (top.mechanism_signature or "—")
+        ),
         counterfactual_basis=(
             "真分（C1）：互斥反事实执行出的判别（降半径×扰容差，verdict=%s）vs GT 根；"
             "该腿未执行/inconclusive → None（不冒充 0）" % (top.counterfactual_verdict or "—")

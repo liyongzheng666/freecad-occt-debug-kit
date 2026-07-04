@@ -1,0 +1,96 @@
+{
+  "_schema": "blend-failure-ontology.md §5；query_playbook(op='chamfer') 实读的可执行决策表。结构与 fillet-failures.json 逐字同构——同 S0–S6 本体、同 localize.tool 名（判别器 op-无关、原样复用）；只有 cause/fix/truth_anchor 换成 chamfer 物理。P1a 域适配：证明本体领域无关。",
+  "_rules": "同 fillet：symptom=触发条件(适配层)；root_cause_candidates 按 distal→proximate 排序，各带 localize.tool 判别器；取最 distal 命中者为根。counterfactual 的 discriminates_from/must_not_change 编码互斥靶向修法。chamfer 的 radius 即倒角距离 d。",
+  "_domain_diff": "与 fillet 的关键差异（实测 FreeCADCmd 1.2.0）：① 溢出是**平斜面盖过面宽**（2·d>面宽）而非滚球容纳，box overflow cliff 恰在 d=minEdge/2、且 d>minEdge/2 是**宽而稳的 NotDone 带**（fillet 同处翻假绿）；② 假绿**搬到凹/曲面支撑**（pocketp 凹壁 d>RC → is_done 但无效），平板重叠反而硬 NotDone；③ 双距 d1≠d2 是 fillet 没有的**方向轴**（见 C4 实验）。",
+  "signatures": [
+    {
+      "id": "chamfer-notdone-overflow",
+      "symptom": { "exception_contains": "StdFail_NotDone", "phase": "fillet_notdone" },
+      "proximate_stage": "S2",
+      "root_cause_candidates": [
+        {
+          "stage": "S0",
+          "cause": "输入支撑面近切 / sliver / 容差不一致：病根在输入质量（op-无关）",
+          "localize": { "tool": "check_valid_input", "check": "input_valid" },
+          "counterfactual": { "fix": "heal_input", "must_not_change": "distance" }
+        },
+        {
+          "stage": "S2",
+          "cause": "倒角距离相对几何过大：平斜面在最小维度上盖过面宽（2·d > 面宽）/ 离开支撑面，bevel 面建不出",
+          "localize": { "tool": "radius_probe", "check": "feasible_upper_bound" },
+          "truth_anchor": "实测 box 10×20×30 makeChamfer overflow cliff 恰在 d=minEdge/2=5.0（d≤4.9 valid，d≥5.0 StdFail_NotDone），且 d>5.0 是宽而稳的 NotDone 带——与 fillet 同处翻假绿不同，chamfer 溢出硬失败。降距(降 d)恢复 → 判 S2。",
+          "counterfactual": { "fix": "lower_distance", "discriminates_from": "S3" }
+        },
+        {
+          "stage": "S3",
+          "cause": "面面求交退化 / 近切不稳：斜面与邻面无干净 contact 曲线（op-无关，ssi_probe 原样复用）",
+          "localize": { "tool": "ssi_probe", "check": "s3_signature" },
+          "mechanism": { "evidence": "期望 1 条 contact 曲线，实得 0；两面近切" },
+          "counterfactual": { "fix": "perturb_tolerance", "must_not_change": "distance" }
+        },
+        {
+          "stage": "S4",
+          "cause": "顶点收敛失败：3+ 倒角边在顶点汇聚，corner 拓扑无法闭合（平面-平面相交而非球面片，truth_anchor 与 fillet 异）",
+          "localize": { "tool": "vertex_probe", "check": "vertex_config" },
+          "mechanism": { "evidence": "某 blend 落脚顶点 n_edges>=4 且 2<=n_blended<n_edges" },
+          "truth_anchor": "实测 cube 10 全边 chamfer 在 d=5.0 NotDone（顶点收敛限，非纯 overflow）；但与 fillet 的 S4 诚实负结果一致——简单构型多死于 S2，S4-proximate 现场须在真实复杂构型出现时才断言，不硬造。",
+          "counterfactual": { "fix": "reduce_blended_edges_at_vertex 或 lower_distance", "must_not_change": "tolerance" }
+        }
+      ],
+      "_failure_classes_scope": "仅本签名（S2-NotDone 细分）；假绿签名不用四态（failure_class=None）。四态判别用 triage_input 的 min_dihedral_deg / min_support_curv_radius——**op-无关**（输入几何属性），故与 fillet 逐字复用。",
+      "failure_classes": {
+        "geometric_near_tangent": {
+          "discriminator": "min_dihedral_deg < near_tangent_eps",
+          "cause": "支撑面近切，平斜面坐不住起始解",
+          "fix": "lower_distance 或 heal 近切（增大夹角）",
+          "salvageable": false
+        },
+        "geometric_curvature": {
+          "discriminator": "chamfer_distance > min_support_curv_radius",
+          "cause": "d > 局部凹曲率半径，平斜面盖过凹腔曲率（注：chamfer 在凹壁上常翻**假绿**而非 NotDone，见 chamfer-falsegreen-invalid；此处指 NotDone 分支）",
+          "fix": "lower_distance（≤曲率半径）或 改输入孔径",
+          "salvageable": false
+        },
+        "algorithmic_overflow": {
+          "discriminator": "else（平面、非近切、无曲率约束）且 blend 边数 ≥2",
+          "cause": "相邻两斜面重叠（2·d > 最小维度面宽），几何可裁剪",
+          "fix": "lower_distance 或 perturb_tolerance；无 SSI 互裁的球面片语义，但两平斜面可求交互裁",
+          "salvageable": true
+        },
+        "face_overflow": {
+          "discriminator": "else 且 blend 边数 == 1（单带，不存在相邻带重叠）",
+          "cause": "单条斜面距离超出相邻面局部尺度：bevel 离开支撑面 / 盖过 edge loop 伸出实体（Parasolid loop_c / overflow），非两带重叠",
+          "fix": "lower_distance（≤ 相邻面局部半宽）或 heal/延伸邻面；无第二条带可裁",
+          "salvageable": false
+        }
+      }
+    },
+    {
+      "id": "chamfer-falsegreen-invalid",
+      "_note": "决策空间②（假绿）：is_done=true 但 check_valid 判无效。**chamfer 的域差异**：假绿主要落在**凹/曲面支撑**上（实测 pocketp 凹壁 d>RC → is_done 但自交无效），而非 fillet 的 B-spline 支撑 / 薄板中段。fg_support_probe（查参数面）对解析凹壁（Cylinder）→ ruled_out，故凹壁假绿多经 fg_selfint_mid(中段自交→S3) 命中或落兜底——这是**诚实记录的域特定/不完全 1:1** 映射（见 chamfer-adapter-transfer.md）。铁律仍成立：check_valid 抓得住、绝不信 IsDone。",
+      "symptom": { "phase": "false_green" },
+      "proximate_stage": "S6",
+      "root_cause_candidates": [
+        {
+          "stage": "S2",
+          "cause": "参数(B-surface)支撑面上倒角写坏几何：偏移有界/延伸受限，IsDone 但面自交/不可定向（op-无关判别器 fg_support_probe 复用）",
+          "localize": { "tool": "fg_support_probe", "check": "parametric_support" },
+          "counterfactual": { "fix": "避免直接在参数支撑面上倒角（先转解析/分割），或降距远离参数面边界", "must_not_change": "tolerance" }
+        },
+        {
+          "stage": "S3",
+          "cause": "两斜带中段交叠自交 / 凹壁斜面自穿（d>凹曲率致斜面互穿），拓扑缝合仍完成 → 假绿",
+          "localize": { "tool": "fg_selfint_mid", "check": "selfint_not_end_local" },
+          "truth_anchor": "实测 pocketp 16×16×10 RC=3 makeChamfer d=4 → is_done=True 但 check_valid 判无效（凹壁斜面互穿）——chamfer 假绿的规范锚点。",
+          "counterfactual": { "fix": "lower_distance（≤凹曲率半径）或斜面互裁", "discriminates_from": "S4" }
+        },
+        {
+          "stage": "S4",
+          "cause": "端盖/corner 构造在曲面终止处写坏几何（端部自交环）：斜面自由端撞曲面未干净闭合但未抛错",
+          "localize": { "tool": "fg_endcap_probe", "check": "defect_end_local" },
+          "counterfactual": { "fix": "改边选（让斜面不终止在曲面上）/延长被倒角边越过曲面区", "must_not_change": "distance" }
+        }
+      ]
+    }
+  ]
+}

@@ -133,6 +133,7 @@ class CausalHypothesis:
     counterfactual_verdict: Optional[str] = None             # 互斥反事实执行出的结构化判别（"S2"|"S3"|"S2->S3"|"inconclusive"）；None=该腿未跑。scorer 据此对 GT.root 打真分（C1）
     confidence: float = 0.0
     failure_class: Optional[str] = None                      # 失效三态：algorithmic_overflow / geometric_near_tangent / geometric_curvature（playbook failure_classes）
+    mechanism_signature: Optional[str] = None                # P1b：预测的失效**机制**（"s3_degenerate_contact"|"s2_rolling_ball_infeasible"）；None=未声明机制/弃权。scorer 对 GT.mechanism_truth 打真分（非深度代理）
 
     def __post_init__(self):
         if not self.chain:
@@ -163,6 +164,7 @@ class GroundTruth:
     aligned_fix: str                                  # 与该因（根）对齐的靶向修法（可执行）
     failure_class: Optional[str] = None               # 真值失效类别（playbook failure_classes 同枚举）；scorer 据此判"失效分类准确率"
     expected_abstain: bool = False                    # 正确行为是弃权（如 clean 输入无缺陷）→ scorer 判 abstention 而非定位；hallucinate 根因＝false_commit
+    mechanism_truth: Optional[dict] = None            # P1b：真值机制中间态 {signature, observable, basis, stage_reached}——多从 truth_run/capture_result 誊来（人审）。None=本 case 无机制真值 → scorer 机制维 None（诚实不打分）
 
     @property
     def root_stage(self) -> Optional[Stage]:

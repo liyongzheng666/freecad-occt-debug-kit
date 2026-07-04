@@ -9,7 +9,13 @@
     "entities_human": "相邻两 fillet 带 stripe1 × stripe2（aDat1/aDat2 SurfData）——S2 中间面，免埋点诊断无法命名（triage 只看输入边/面），需 A7 capture 抓活几何才能回填这俩 token。故 box 当前 entity 召回应为 0、定位止于 stage——这正是 capture 相对免埋点的实体级定位增量。",
     "expected_evidence": "ChFi3d_StripeEdgeInter：两带 pcurve 经 Geom2dInt_GInter 求交，NbPoints/NbSegments>0（带相互重叠）→ 抛 StdFail_NotDone",
     "aligned_fix": "SSI 互裁(trim)：两相邻圆角面求交+互裁得合法结果（algorithmic_overflow，几何可救）；降半径(≤可行上界[2,5))亦可但非必需",
-    "failure_class": "algorithmic_overflow"
+    "failure_class": "algorithmic_overflow",
+    "mechanism_truth": {
+      "signature": "s3_degenerate_contact",
+      "observable": { "n_section_edges": 0, "s3_signature": true },
+      "basis": "env_emit 真抓两 blend 圆柱面（capture_result.ssi_probe，非 fixture）：两带落同一 R5 圆柱、接触曲线退化为零。P1b 机制真分——预测机制 vs 此真值（非深度代理）。",
+      "stage_reached": "S3"
+    }
   },
   "truth_run": {
     "method": "LLDB `br set -E c++` → 跳过 2 个 macOS Security 框架异常 → 第一个 OCCT 抛出",

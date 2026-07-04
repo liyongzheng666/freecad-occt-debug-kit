@@ -15,7 +15,13 @@
     "entities_human": "失效现场 = 盲孔孔壁 face#6（Part.Cylinder 凹曲率半径 3）。canonical token 用 triage 的确定性 OCCT 面序号；triage 独立量出 face#6 的曲率半径 3 = 几何真值的凹曲率，故匹配非循环。",
     "expected_evidence": "滚球半径 r=4 > 凹腔曲率半径 3 → 凹角处放不下半径 4 的球 → ChFi3d 滚球面建不出 → StdFail_NotDone。radius_probe 可行/不可行边界恰落在曲率半径 3 上（r=2 可行 < 3 < r=3.5 不可行）。",
     "aligned_fix": "lower_radius（≤ 凹曲率半径 3）或 改输入孔径（扩大孔径 R≥r）。降半径之外无解（几何不可救）。",
-    "failure_class": "geometric_curvature"
+    "failure_class": "geometric_curvature",
+    "mechanism_truth": {
+      "signature": "s2_rolling_ball_infeasible",
+      "observable": { "min_support_curv_radius": 3.0, "feasible_bound": [2.0, 4.0] },
+      "basis": "triage 独立量出孔壁 face#6 凹曲率半径 3.0 + radius_probe 可行/不可行边界落在其上（r=2 可行 <3< r=3.5 不可行）→ 滚球半径 4>3 塞不进(S2 曲率)。P1b 机制真分。",
+      "stage_reached": "S2"
+    }
   },
   "truth_run": {
     "method": "几何第一性原理 + radius_probe 边界证据（非 LLDB 埋点）",

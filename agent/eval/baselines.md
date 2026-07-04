@@ -195,3 +195,68 @@ playbook 节点加 S4 候选后，llm replay 忠实重放**旧轨迹**：录制�
 即"5 维里 2 维假分"补掉第一维（机制维真分仍待 A8 truth-run 中间态）。基线门实测：只改 scorer 未重生成快照 → `test_baseline` 变红（精确指出 counterfactual 层漂移）→ 重跑 `python -m agent.eval.snapshot` 更新快照 → 复审 diff 确认仅该维动 → 绿。
 
 > 复现：`python -m agent.eval.test_scorer`（含 6 条反事实真分断言）+ `python -m agent.eval.test_baseline`（离线门）。
+
+---
+
+## 2026-07-04 更新：规模化 eval —— 13-case 串行 → 115-case 并行 suite（P0）
+
+> 变更：把手工 13-case 串行 eval 升成"小但 production-shaped"的**并行 + per-case 沙箱/预算 + 失败隔离**套件。核心是一个**参数化 case 生成器**（[gen_cases.py](gen_cases.py)）+ [runner.py](runner.py) 的 `ProcessPoolExecutor` 并行层。**默认 `--suite cases`（13 手工真值）仍走串行、逐位不变**（baseline 门不漂移，见下"回归"）；规模化经 `--suite parametric --workers N` 显式开启。
+
+**参数化族（GT 全部几何第一性，不造假）**：`box_false_green`(40：`rf>minEdge/2` → is_done=True 但自交无效 selfX=8，是 thinplate-false-green 的规模化推广)、`geometric_curvature`(24：`rf>RC`)、`geometric_near_tangent`(25：二面角 θ<10°，半径无关)、`clean`(26：`rf`远小于临界 → 应正确弃权)。每族参数区间都留余量、避开跨平台临界带；每 case 标 `synthetic:True` + `gt_basis:parametric_first_principles` + `family`，与 13 手工 case **分开报**。
+
+**分层读数（rule 臂 115 case，12 workers）**：
+
+| 层 | n | 定位 | 失效分类 | 机制* | 反事实* | 校准 | tool | 弃权 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| geometric_curvature | 24 | 1.00 | 1.00 | 0.50 | 1.00 | 0.70 | 9.25 | ✓结论 |
+| geometric_near_tangent | 25 | 1.00 | 1.00 | 0.50 | 1.00 | 0.70 | 10.24 | ✓结论 |
+| box_false_green | 40 | **0.40** | n/a | 0.50 | n/a | 0.75 | 3.00 | ✓结论 |
+| clean/abstain | 26 | n/a | n/a | n/a | n/a | n/a | 2.00 | ✓弃权 |
+| **全集** | **115** | 0.73 | 1.00 | 0.50 | 1.00 | 0.72 | 5.65 | — |
+
+abstention precision **1.00** / false_commit **0**（26 个 clean 无一幻觉根因）。
+
+**规模化读数**：`wall_total=21.2s vs Σper-case=229s → 加速比 10.78×`（亚线性）；`TIMEOUT=0 ERROR=0 SKIP=0`。per-case 预算：wall（SIGALRM 软背板）+ 每次 FreeCADCmd `REPRO_TIMEOUT_S`（硬）+ 可选 `RLIMIT_AS`。
+
+**诚实边界（关键，别把规模套件当 13-case 的替代）**：
+- 本套件测**失效分类 + stage 级定位 + 吞吐**；**不**测实体级定位（`entities=[]` → entity 维 None）——实体精度是 13 手工 case 的活（那里有 LLDB/几何真值支持具名 token）。
+- `box_false_green` 定位封顶 **0.40** 是**按设计的诚实下限**：免埋点只抓得到 S3 自交这个**症状**，抓不到"半径过大致带重叠"的 S2 **距端根**（root=S2 距端 / S3 症状，与 thinplate 一致）。这不是缺陷，是免埋点假绿定位深度的真实测量。
+- 机制维仍是深度代理（`*`，待 P1b 真分）；反事实维在 S2-NotDone 族已真分（=1.0），假绿族不跑互斥反事实腿 → n/a（诚实不打分）。
+
+**对抗式复审（16-agent workflow）自查出 3 个诚实性缺陷、已修**（铁律：会撒谎的 eval 比没有更糟）：
+- **wall 预算被吞→假 OK**（低，铁律）：一发 SIGALRM 若被 investigate 的 `except Exception` 吞掉，超预算 case 会以 status=OK 蒙混。修：`_on_alarm` 置 `fired` 位，run_case 返回后若 fired 则强制改判 **TIMEOUT**（不假绿）。
+- **隔离过度宣称**（中）：FreeCADCmd **subprocess** 崩溃确被隔离，但 **worker 进程级**死亡（`--mem-mb` 的 RLIMIT_AS OOM / native 崩溃穿回 worker）会毒化整池、把健康兄弟一并误判 ERROR。修：① 文档收紧到"subprocess 级绝对隔离、进程级由重跑兜"；② `_run_parallel` 在 `BrokenProcessPool` 时把 pending **重跑隔离**（逐个单池）→ 只有真凶落 ERROR、兄弟恢复（`test_runner_scale` 用 env 故障注入 SIGKILL 实证）。
+- **文档角度带写错**（低）：gen_cases 近切带 `θ∈[0.4°,4.3°]` 与实际网格 `{0.5,1,2,3,4}°` 不符，已改齐。
+
+**回归**：`--suite cases` 串行路径逐位不变——全集 **定位 0.92 / 失效分类 1.00 / tool 6.23 / false_commit 0** 与改造前一致；21 个离线测试全绿（含 `test_baseline` 门 + 新 `test_gen_cases` / `test_runner_scale`）。
+
+> 复现：`python -m agent.eval.runner --suite parametric`（115 case 并行 + 分层 + 规模化读数）；`python -m agent.eval.gen_cases`（族清单/计数）；`python -m agent.eval.test_gen_cases`（第一性不变量）+ `python -m agent.eval.test_runner_scale`（并行/沙箱/预算/隔离，含 SIGKILL 隔离实证）。
+
+---
+
+## 2026-07-04② 更新：机制维升为真分（P1b-C2）+ 全工具层离线重放地基（P1b-C1）
+
+### C2 —— 机制维从深度代理 → 真分（补掉"5 维 2 假分"剩下那一维）
+
+此前机制维是 `_MECH_DEPTH_PROXY[localization_depth]`（0.2/0.5/1.0），**只代理"定位站到多深"、从不看机制对错**。现在：给 `CausalHypothesis` 加 `mechanism_signature`（investigate 在 S3 ssi fired → `s3_degenerate_contact` / S2 几何族 → `s2_rolling_ball_infeasible`，纯读已跑裁定、不改决策），给 4 个 case 加 `mechanism_truth`（**誊自已冻的 truth_run/capture_result，零新埋点**），scorer `_mechanism` 拿**预测签名 vs 真值签名**打真分：匹配 1.0 / 不匹配 0.0（错机制是真 miss）/ 无真值·未声明·上游 throw → **None（不冒充）**。
+
+| case | mechanism_truth 出处 | 预测签名 | 真分 |
+| --- | --- | --- | --- |
+| box-r5 | env_emit 真抓两 blend 面（n_section_edges=0） | s3_degenerate_contact | **1.0** |
+| s3-fixture | 合成 fixture（诚实标注） | s3_degenerate_contact | **1.0** |
+| wedge-sliver | LLDB 抓 HS1/HS2（dihedral 1.72, section=1） | s2_rolling_ball_infeasible | **1.0** |
+| pocket-blind-hole | triage 凹曲率 3.0 + radius 阶梯边界 | s2_rolling_ball_infeasible | **1.0** |
+
+**诚实边界**：真分只覆盖有 `mechanism_truth` 的 **4/13** case，其余 None **不计入**均值（runner 脚注印子集数 N、报表标 `机制†`，别读成"全体机制满分"）。**刻意不设 observable 容差带**（避免"容差带当洗白"）——observable 只作真值出处依据、供人复核。A-phase-2（OCCT `OCCT_DEBUG_S3_STATE` 埋点抓原始交线条数/StartSol 残差）仍是**时间盒化的计划**、非本轮兑现。基线门实测：加 `_mechanism` → snapshot 机制列漂移 → `test_baseline` 变红（精确指出 mechanism 层）→ 重跑 `snapshot` → 复审 diff（仅机制维动、全集 定位 0.918/失效分类 1.0/false_commit 0 不变）→ 绿。
+
+### C1 —— 全工具层 record/replay 地基（真离线 eval 的第一块）
+
+此前只有 reproduce 有 real|replay、且基线门只冻 Conclusion（不重放工具层）。本轮：
+- 抽出共享 `agent/tools/_fixtures.py`（键设计 + `FixtureNotRecorded` + `REPRO_BACKEND`/`REPRO_RECORD_DIR` eval-wide 开关）。
+- **修掉 reproduce fixture-key 撞键 bug**（旧键漏 tolerance/edges → `_probe_tolerance_fix` 同半径扰 tol 会覆盖同一文件、静默错值）；replay-miss 从 `FileNotFoundError`（被 runner 当 SKIP 吞）改抛 `FixtureNotRecorded` → **runner 归 ERROR 非 SKIP**（漏录不静默，堵幸存者偏差）。
+- 给 `check_valid` 上 real|replay（按 **brep 内容哈希**寻址——brep 落 per-run tmp、路径不稳、内容才稳）。
+- runner 加 `--record-dir` / `--backend`（一遍 real 录、一遍 replay 离线）。
+
+**已证（`test_offline_replay`）**：clean case（诊断只用 reproduce+check_valid）record→replay **字节级一致**，且 replay 时把 FreeCADCmd/occ-debug-mesh 指向**不存在路径仍产出同一 Conclusion** → 铁证真离线、非"碰巧二进制在"。**诚实剩余增量**（模式已就位、地基已验）：缺陷 case 的全离线还需 triage/vertex/ssi/falsegreen 也上双后端 + brep 路径跨机相对化 + CI 加 `--backend replay` 步。这是下一个增量，不是本轮空头支票。
+
+> 复现：`python -m agent.eval.test_mechanism_score`（机制真分 1.0/0.0/None 分档）+ `python -m agent.eval.test_offline_replay`（record→replay 字节一致 + 离线实证）。

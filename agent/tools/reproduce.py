@@ -51,8 +51,23 @@ def _safe_token(case_id: str) -> str:
     return f"{base}_{hashlib.sha1(case_id.encode('utf-8')).hexdigest()[:8]}"
 
 
-def _fixture_path(record_dir, case_id: str, radius: float) -> Path:
-    return Path(record_dir) / f"{_safe_token(case_id)}__r{radius}.json"
+def _op_token(case_id: str, op: str = "fillet") -> str:
+    """filename-safe token；op-scope 非 fillet（fillet 前缀留空 → 现有 fixture 名逐字不变、零漂移）。"""
+    tok = _safe_token(case_id)
+    return tok if op == "fillet" else f"{op}_{tok}"
+
+
+def _fixture_path(record_dir, case_id: str, radius: float, op: str = "fillet",
+                  tolerance: float | None = None, edges: str | None = None) -> Path:
+    """键含**所有会改变输出的输入**（radius+tolerance+edges+op）——修掉旧键漏 tolerance/edges 的撞键
+    bug（_probe_tolerance_fix 同 radius 扰 tol=0.001/0.01/0.1 会覆盖同一文件 → 静默错值）。默认
+    fillet+无 tol+无 edges → `{token}__r{radius}.json`（常见路径逐字不变、零漂移）。"""
+    suffix = f"__r{radius}"
+    if tolerance is not None:
+        suffix += f"__tol{tolerance}"
+    if edges:
+        suffix += f"__e{str(edges).replace(',', '-')}"
+    return Path(record_dir) / f"{_op_token(case_id, op)}{suffix}.json"
 
 
 def _from_dict(d: dict) -> RunEnd:
@@ -72,29 +87,39 @@ def reproduce(
     *,
     radius: float | None = None,
     tolerance: float | None = None,
-    backend: str = "real",
+    backend: str | None = None,
     out_dir: str | None = None,
     record_dir: str | None = None,
-    timeout_s: int = 120,
+    timeout_s: int | None = None,
     edges: str | None = None,
+    op: str = "fillet",
+    dist2: float | None = None,
 ) -> RunEnd:
-    """backend: "real"(FreeCADCmd) | "replay"(录制 fixture)。
+    """backend: "real"(FreeCADCmd) | "replay"(录制 fixture)；None → REPRO_BACKEND env（eval-wide 开关）→ "real"。
 
     out_dir：产出（RunEnd json + bad_shape brep）落地目录；None → mkdtemp（持久，caller 负责清）。
     record_dir：real 跑完把 RunEnd + brep 录进去，供 replay 离线重放。
     tolerance：A7 WP3 互斥反事实——fillet 前对几何 fixTolerance(值)，只动容差不动半径（None=不动）。
     edges：G26 单/多边聚焦——逗号分隔 1-based 边号（"3" / "1,4"），透传 REPRO_EDGES；
     None/"" → fillet 全部边（合成 case 现状，向后兼容）。真实模型必给（否则 fillet 全部边失真）。
+    op：P1a 域轴——"fillet"(默认，makeFillet) | "chamfer"(makeChamfer)；radius 即倒角距离。
+    dist2：chamfer 双距（makeChamfer(radius,dist2,edges)）；None=单距。fixture 名 op-scope 防 fillet 撞键。
     """
+    from agent.tools import _fixtures as fx
+    backend = fx.resolve_backend(backend)                # None → REPRO_BACKEND env → "real"
+    record_dir = fx.resolve_record_dir(record_dir)       # None → REPRO_RECORD_DIR env
     r = 1.0 if radius is None else float(radius)
-    tok = _safe_token(case_id)
+    # per-subprocess 预算：显式 timeout_s 优先；否则 REPRO_TIMEOUT_S（P0 沙箱注入）；再否则 120（旧默认）。
+    if timeout_s is None:
+        timeout_s = int(os.environ.get("REPRO_TIMEOUT_S", "120"))
+    tok = _op_token(case_id, op)
 
     if backend == "replay":
         if not record_dir:
-            raise ValueError("replay 后端需 record_dir")
-        fp = _fixture_path(record_dir, case_id, r)
+            raise ValueError("replay 后端需 record_dir/REPRO_RECORD_DIR")
+        fp = _fixture_path(record_dir, case_id, r, op, tolerance, edges)
         if not fp.exists():
-            raise FileNotFoundError(f"无录制 fixture：{fp}")
+            raise fx.FixtureNotRecorded(f"无录制 reproduce fixture：{fp.name}")   # → runner ERROR 非 SKIP
         return _from_dict(json.loads(fp.read_text(encoding="utf-8")))
 
     if backend != "real":
@@ -121,6 +146,14 @@ def reproduce(
         env["REPRO_EDGES"] = str(edges)
     else:
         env.pop("REPRO_EDGES", None)                # 防继承外层 env 的残留值污染合成 case
+    if op and op != "fillet":                        # P1a：op 轴（默认 fillet → 不设 env，合成 case 逐位不变）
+        env["REPRO_OP"] = str(op)
+    else:
+        env.pop("REPRO_OP", None)
+    if dist2 is not None:
+        env["REPRO_DIST2"] = str(dist2)
+    else:
+        env.pop("REPRO_DIST2", None)
     try:
         proc = subprocess.run(
             [str(bin_path), str(_HARNESS)], env=env,
@@ -153,6 +186,7 @@ def reproduce(
             dst = rec / f"{tok}__r{r}.brep"
             shutil.copy(data["bad_shape"], dst)
             data["bad_shape"] = str(dst)
-        _fixture_path(rec, case_id, r).write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        _fixture_path(rec, case_id, r, op, tolerance, edges).write_text(
+            json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
     return _from_dict(data)
