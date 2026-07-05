@@ -1,13 +1,22 @@
 # 圆角缺陷调研 Agent —— 推进路线图与欠缺项清单
 
-> 状态：**Agent v0 + 根因 Eval + rule/LLM A/B + 轨迹/标注闭环（含 viewer review 写回）+ G26 真实模型输入(v1) + Parasolid 对照补足第一轮（失效四态 + STEP 真值资产 + kernel_crash 兜底）已投产**（A0–A7 工具层 ✅，A6 全闭环 ✅，G26 BREP/STEP+指定边 ✅，P0.1/P1.1/P1.2/P2.1 ✅，**剖析加固 C1/C2/O1/O2/O3 ✅**；下一站 A8 深探针 / Y 档打磨）<br>
+> 状态：**Agent v0 + 根因 Eval + rule/LLM A/B + 轨迹/标注闭环（含 viewer review 写回）+ G26 真实模型输入(v1) + Parasolid 对照补足第一轮（失效四态 + STEP 真值资产 + kernel_crash 兜底）+ Part6 规模化并行 eval + chamfer 域适配器 + 机制维真分 + 工具层离线重放地基（P0/P1a/P1b）已投产**（A0–A7 工具层 ✅，A6 全闭环 ✅，G26 BREP/STEP+指定边 ✅，P0.1/P1.1/P1.2/P2.1 ✅，**剖析加固 C1/C2/O1/O2/O3 ✅**，**A8 的 G15 沙箱/并发 + G16 泛化 adapter ✅**；下一站 A8 深探针（S2/S4 深埋点、机制维 A-phase-2）/ Y 档打磨）<br>
 > **最终目标：根因寻找（root-cause finding）**——不是"把圆角修好"，而是定位"圆角失败是流水线哪一阶段先崩、为什么崩"，并给出可验证的因果结论供人 review。<br>
 > 面试对标：DeepSeek **Harness 工程师**（agent 脚手架 + eval 基础设施）。<br>
 > 关联真源：[playbook/blend-failure-ontology.md](playbook/blend-failure-ontology.md)（失效本体）、[docs/root-cause-verification.md](docs/root-cause-verification.md)（根因验证方法学）、[../docs/occ-fillet-debug-agent-architecture.md](../docs/occ-fillet-debug-agent-architecture.md)（架构）、[../docs/fillet-para-study-and-agent-gap-plan.md](../docs/fillet-para-study-and-agent-gap-plan.md)（Parasolid 失效分类学对照 + 补足计划 + 执行进展）、[../docs/occ-mesh-daemon-plan.md](../docs/occ-mesh-daemon-plan.md)。
 
 ---
 
-## 进度快照（最近更新 2026-07-04）
+## 进度快照（最近更新 2026-07-05）
+
+### Part6 → clear-hire 加固（2026-07-05，P0 + P1a + P1b）——规模化 eval + 第二领域适配器 + 补掉最后一个假分维 + 真离线地基
+
+> INTERVIEW-PREP Part 6 的补强清单落地。**做掉 P0 + P1a + P1b**（23 个离线测试全绿；fillet 13-case 逐位不变：定位 0.92 / 失效分类 1.00 / tool 6.23 / false_commit 0）。
+
+- **P0 规模化 eval（补齐 G15）**：13-case 串行 → **166-case 并行 suite**。`eval/gen_cases.py` 造参数化几何族（`box_false_green`/`geometric_curvature`/`geometric_near_tangent`/`clean` + chamfer 4 族，GT 全**几何第一性**、留余量避临界带）；`runner.py` 上 `ProcessPoolExecutor` 并行 + **per-case 沙箱**（独立 tmp 跑完即清）+ **预算**（wall SIGALRM 软背板 / 子进程 `REPRO_TIMEOUT_S` 硬封顶 / 可选 `RLIMIT_AS`）+ **失败隔离**（worker **进程级**死亡 `BrokenProcessPool` 重跑隔离、只真凶落 ERROR、健康兄弟恢复）+ scale 读数。实测 **166 case / 12 worker → 墙钟 21s vs Σ229s = 10.8×**，0 ERROR/TIMEOUT/SKIP。**对抗式 16-agent 复审**自查修 3 个诚实性缺陷：wall 被 investigate 的 except 吞→`fired` 兜底强制 TIMEOUT（不假绿）/ 隔离过度宣称→重跑隔离 + 文档收紧 / gen_cases 角度带文档写错。
+- **P1a chamfer 域适配器（补齐 G16——证明本体领域无关）**：一个 `op` 轴（`agent_run.op`，缺省 fillet → 既有 case 逐位不变）+ 一张 `playbook/chamfer-failures.json`——判别器（triage 近切/曲率、ssi、vertex、falsegreen）**op-无关原样复用**；chamfer 族五维打分与 fillet 对偶**逐层同分**（溢出/近切 1.00、凹壁假绿 0.40 症状级）。3 个**诚实域差异**记入 `playbook/chamfer-adapter-transfer.md`（假绿从薄板搬到凹壁 / `ValueError:No error` 无 S 阶槽 / 双距 d1≠d2 方向轴无 fillet 对偶）。C4 证伪 demo（`demo/chamfer_directional.py`）：**双距方向轴是唯一 order-dependent 口子**——推理策略可能在此赢 entity 深度（窄证伪），其余族仍 order-independent 死胡同。
+- **P1b-C2 机制维真分**：机制维从 `localization_depth` 深度代理 → **真分**（investigate 挂 `mechanism_signature`：S3 ssi fired→`s3_degenerate_contact` / S2 几何族→`s2_rolling_ball_infeasible`；scorer `_mechanism` 拿它 vs `GT.mechanism_truth` 打分，匹配 1.0 / 错 0.0 / 无真值·未声明·上游 throw → None）。4 case 真值（box-r5/wedge-sliver/pocket/s3-fixture）**誊自已冻 truth_run/capture_result、零新埋点**；快照重冻。**"5 维 2 假分"再补一维**（反事实 C1 已补，机制此轮补，深度埋点 A-phase-2 留时间盒计划）；报表标 `机制†` + 脚注印子集数、不冒充全体满分。
+- **P1b-C1 全工具层离线重放地基**：抽 `tools/_fixtures.py`（键设计 + `FixtureNotRecorded` + `REPRO_BACKEND`/`REPRO_RECORD_DIR` eval-wide 开关）；`check_valid` 上 real|replay（按 **brep 内容哈希**寻址）；**修掉 reproduce fixture-key 撞键 bug**（旧键漏 tolerance/edges → tol 变体覆盖同文件、静默错值）；replay-miss 从 `FileNotFoundError`（被 runner 当 SKIP 吞）改抛 `FixtureNotRecorded` → **ERROR 非 SKIP**。`test_offline_replay` 实证 clean case record→replay **字节一致 + 真离线**（二进制指向不存在仍产出同一 Conclusion）。**诚实剩余增量**：缺陷 case 全离线待 triage/vertex/ssi/falsegreen 也上双后端 + brep 路径跨机相对化 + CI 加 `--backend replay` 步。
 
 ### 剖析驱动的加固（2026-07-04，6 PR 合并 #7–#12）——把"手动断言 / 装饰性代理 / 静默失效"补成硬护栏
 
@@ -86,7 +95,7 @@
 | G19 | **失效本体 + 症状/阶段适配层**（playbook 骨架） | 🟡 适配层已代码化（symptom→近端阶段节点 + distal 候选 + 判别器映射）；本体多签名待扩 | 🔴 | A2 |
 | G20 | **根因三腿验证**（定位 / 机制 / 反事实，含互斥靶向修法判别） | 方法学已写（见 docs/），未实现 | 🔴 | A3 |
 | G18 | **输入预检 triage（S0 输入质量）**——agent 首发诊断 | ✅ **P1.3 收口（2026-07-02②）**：近切+凹曲率判别（驱动四态）+ 四字段补全——`convexity`（角占率探针：边中点垂直面 16 点小圆 isInside 占率≈材料楔角/360，方向无关；pocket 盲孔底缘=唯一凹边实证）/`short_edges`/`sliver_faces`/`tolerance_outliers`（薄片 fixture 正例）。**只报告不进判别**（判别量逐位不变）。输入 BRepCheck 由既有 check_valid_input 判别器覆盖 | 🟠 | A2 |
-| G5 | **根因 Eval harness**（scorer 按定位/机制/反事实/校准打分 + runner + 回归基线） | ✅ `eval/runner.py` + `eval.sh` 一条命令真跑全集 → `scorer` 五维（加**失效分类**）分层打分，规则版基线登记 `baselines.md`；机制/反事实为代理/携带，真分待 A8 | 🟠 | A4 |
+| G5 | **根因 Eval harness**（scorer 按定位/机制/反事实/校准打分 + runner + 回归基线） | ✅ `eval/runner.py` + `eval.sh` 一条命令真跑全集 → `scorer` 五维（加**失效分类**）分层打分，规则版基线登记 `baselines.md`；**反事实维（C1）+ 机制维（P1b-C2，2026-07-05）均已升为真分**——机制拿 `mechanism_signature` vs `GT.mechanism_truth` 打分（4 case 有真值→真分、其余 None 不冒充），"5 维 2 假分"补齐；深度埋点式机制（原始交线条数/StartSol 残差）留 A-phase-2 计划 | 🟠 | A4 |
 | G6 | **Case 数据集 + ground truth（四元组）** | 只有 mesher fixtures，无标注缺陷集 | 🟠 | A1 |
 | G21 | **case 分层**（凹/凸 × 单边/链/顶点 × 定/变半径 × clean/overflow） | 无；现有思路是玩具 box | 🟠 | A1 |
 | G22 | **instrumented truth-run GT**（埋点版跑出"真崩阶段+实体"作标签） | 无 | 🟠 | A1 |
@@ -101,8 +110,8 @@
 | G12 | **置信度 / 主动弃权 + abstention precision** | 🟡 **弃权度量已落地**：scorer 判弃权四态（correct_abstain / false_commit / wrong_abstain / correct_commit），runner 汇总 abstention precision + false_commit 安全指标（`box-clean` 区分度 case 验证）；⏳ 置信度阈值驱动的主动弃权（停在能站住的层）待 A8 | 🟡 | A4/A8 |
 | G13 | **真实 capture 前半管线**（occdbg / LLDB 动态命令 / FCStd baseline / instrumentation patch） | 🟡 LLDB capture 链路已通（断点绑定 + occ_emit_shape→BREP，`capture.py` 桥真跑验证）；FCStd baseline / instrumentation patch 待 | 🟡 | A7/A8 |
 | G14 | **SurfData/corner 深探针（S2/S4）** | 依赖 G13 | 🟡 | A8 |
-| G15 | **沙箱 / 资源上限 / per-case 隔离 / 并发** | daemon 有单点 timeout，未泛化 | 🟡 | A8 |
-| G16 | **泛化 adapter**（chamfer / boolean / offset；本体已内核无关） | 仅 fillet | 🟡 | A8 |
+| G15 | **沙箱 / 资源上限 / per-case 隔离 / 并发** | ✅ **P0 投产（2026-07-05）**：`eval/runner.py` 上 `ProcessPoolExecutor` case 级并行 + per-case 沙箱（独立 tmp 跑完即清）+ 预算（wall SIGALRM / 子进程 `REPRO_TIMEOUT_S` / 可选 `RLIMIT_AS`）+ **失败隔离**（subprocess 崩只落该行；worker 进程级死亡 `BrokenProcessPool` 重跑隔离、只真凶 ERROR）。实测 166 case/12 worker 墙钟 21s vs Σ229s=10.8×、单 case 崩不杀全轮（`test_runner_scale` SIGKILL 故障注入实证）。跨平台容差：GT 参数留余量避临界带 | 🟡 | A8/P0 |
+| G16 | **泛化 adapter**（chamfer / boolean / offset；本体已内核无关） | ✅ **P1a 投产（2026-07-05）——本体领域无关从断言变实证**：一个 `op` 轴（`agent_run.op`，缺省 fillet 逐位不变）+ `playbook/chamfer-failures.json`；判别器 op-无关原样复用，chamfer 族打分与 fillet 对偶逐层同分。转移账本 `playbook/chamfer-adapter-transfer.md`（1:1 复用 / 域特定 / 3 处诚实"崩"映射）。⏳ boolean/offset 待 | 🟡 | A8/P1a |
 | G26 | **真实模型输入 adapter**（载入用户 FCStd/STEP/BREP + 指定边 + 单边 triage）——从合成 case 跨到真实失败诊断 | 🟡 **v1 已投产**（2026-07-01）：`build_shape` 认 `brep:/step:/file:` 前缀载真几何（BREP+STEP，走 `Part.Shape().read()`）；`edges` 穿透 reproduce(`REPRO_EDGES`) 全诊断链；`triage_input(edge_index=)` 单边聚焦（`TRIAGE_EDGE_INDEX`）；CLI `investigate "brep:/abs.brep" <r> --edges N`。自测 `tools/test_g26_realmodel.py`（自足 round-trip，缺 FreeCADCmd SKIP）。⚠️ **坑（P0.1 实证）**：STEP 导出+重读会**重编号边**（`Part.Shape().read()` 边序 ≠ 内存构建序，E4 7→8、E5 7→6）——边号必须对**读回后**的 shape 复核。✅ **O2（#11）**：FCStd 直读已补（`build_shape` 认 `fcstd:` 前缀，`openDocument` + 取带 solid 对象，默认最后一个 + `fcstd:/abs.FCStd#ObjName` 选择器消歧）；⏳ 多边 triage 消歧（逐边找元凶）留 follow-up（纠缠 E2 多边基线） | 🟠 | A6 |
 | G27 | **overflow 现象维**（单带溢出 vs 两带重叠二分；Parasolid Ch74 overflow + §77.3.4 loop_c 对照） | ✅ **P2.1 已落地**（2026-07-02）：playbook 加 `face_overflow` 四态；`_classify_s2_failure` else 分支按 **blend 边数二分**（单边=单带溢出 / ≥2 边=两带重叠）——修掉"单边 case 谎称两相邻带重叠"的假机制。自测 `loop/test_investigate_overflow.py`（box-r5/E2 回归 + E3/E5/E6 转类 + cause 文案断言）。⏳ 细分 loop vs neighbour 溢出（P2.3）、smooth/cliff/notch 现象识别留后 | 🟠 | P2 |
 | G28 | **内核崩溃归类**（进程被信号打死 ≠ harness 逻辑无输出） | ✅ **P1.1 已落地**（2026-07-02）：`reproduce` 把 rc<0 / ≥128 归 `phase="kernel_crash"`（→ investigate 分支 C 兜底弃权）。**诚实边界**：OCCT 圆角自然崩溃**非隔离可复现**（同进程多半径累积假象，E4 实测修正），故验收用合成信号退出 `tools/test_reproduce_crash.py`，不碰运气触发真崩溃 | 🟡 | P1 |
@@ -129,7 +138,9 @@ agent/
 ├── playbook/
 │   ├── blend-failure-ontology.md   # 失效本体（S0–S6 + ChFi3d 适配）✅ 已建
 │   ├── fillet-failures.json        # ✅ 可执行决策表（symptom→候选+判别器+失效四态，P2.1 加 face_overflow）
-│   └── fillet-failures.yaml        # 人读 schema 参考（环境无 PyYAML，表用 json）
+│   ├── fillet-failures.yaml        # 人读 schema 参考（环境无 PyYAML，表用 json）
+│   ├── chamfer-failures.json       # ✅ P1a chamfer 决策表（与 fillet 同构，query_playbook(op='chamfer') 读）
+│   └── chamfer-adapter-transfer.md # ✅ P1a 转移账本：1:1 复用 / 域特定 / 3 处诚实"崩" + C4 方向轴证伪
 ├── docs/
 │   └── root-cause-verification.md  # 根因三腿验证方法学 ✅ 已建
 ├── cases/                          # case 定义 + 四元组 GT（G6/G21/G22）
@@ -146,28 +157,32 @@ agent/
 │   ├── E5-boss-face-overflow.json  # ✅ P0.1+P2.1：溢出到 boss（face_overflow，Ch74/Fig74-9）
 │   └── models/                     # ✅ P0.1 STEP 真值资产（6 个 + manifest.json，逐一隔离实跑验证）
 ├── tools/                          # agent-native typed 工具（G2/G3/G17/G18）
-│   ├── reproduce.py                # FreeCADCmd recompute；real + replay 双后端
-│   ├── _fillet_harness.py          # FreeCAD 进程内 fillet harness（env 驱动，非 agent 包）
-│   ├── check_valid.py              # 几何有效性判据（替代 IsDone）
-│   ├── triage_input.py             # S0 输入预检 + 失效分类判别（近切/凹曲率）
-│   ├── _triage_harness.py          # FreeCAD 进程内 triage harness（env 驱动，非 agent 包）
+│   ├── reproduce.py                # FreeCADCmd recompute；real + replay 双后端（P1a: op=fillet|chamfer + dist2；P1b: REPRO_BACKEND/key 修撞键）
+│   ├── _fillet_harness.py          # FreeCAD 进程内 fillet/chamfer harness（env 驱动 REPRO_OP，非 agent 包；含参数化 boxp/pocketp/wedgep builder）
+│   ├── check_valid.py              # 几何有效性判据（替代 IsDone）；P1b real|replay（brep 内容哈希）
+│   ├── triage_input.py             # S0 输入预检 + 失效分类判别（近切/凹曲率），op-无关
+│   ├── _triage_harness.py          # FreeCAD 进程内 triage harness（env 驱动，非 agent 包；含参数化 builder）
 │   ├── ssi_probe.py                # S3 靶向子复现（面面求交+近切角→S3签名）（A7）
 │   ├── _ssi_harness.py             # FreeCAD 进程内 SSI harness（env 驱动，非 agent 包）
 │   ├── capture.py                  # LLDB 活几何 capture 桥（occ_capture→BREP→ssi_probe）（A7）
-│   └── playbook.py                 # query_playbook 检索
+│   ├── playbook.py                 # query_playbook(op) 检索——op 选 {op}-failures 表
+│   └── _fixtures.py                # ✅ P1b-C1 共享 record/replay 键/IO 层（FixtureNotRecorded + REPRO_BACKEND/RECORD_DIR 开关）
 ├── loop/                           # agent 决策回路（G1/G20）
 │   ├── decide_rule.py              # ✅ 规则版 policy decide(state)→action（eval 下限基线 + A/B rule 臂）
 │   ├── decide_llm.py               # ✅ LLM 版 policy decide(state)（A5）：claude_cli/replay/api 三后端 + 录制
 │   ├── test_decide_llm.py          # ✅ 纯函数单测（prompt 构造 / action 解析，不碰网络）
 │   └── investigate.py              # observe→定位→机制→反事实→结论
-├── eval/                           # 根因评估 harness（G5/G11）✅ A4/A5
-│   ├── scorer.py                   # 定位/失效分类/机制*/反事实*/校准 五维 + 弃权四态打分
-│   ├── runner.py                   # 跑全集 → investigate(--policy) → score → 分层表（tool-call/wall-clock）
-│   ├── eval.sh                     # 一条命令入口（→ runner，透传 --case/--json/--policy）
-│   ├── baselines.md                # rule（A3）+ LLM（A5）基线 + A/B 结论
+├── eval/                           # 根因评估 harness（G5/G11）✅ A4/A5/P0/P1b
+│   ├── scorer.py                   # 定位/失效分类/机制†/反事实*/校准 五维 + 弃权四态；机制维 P1b 真分（vs GT.mechanism_truth）
+│   ├── runner.py                   # 跑全集 → investigate(--policy/--op) → score → 分层表；P0 并行/沙箱/预算/隔离 + --suite/--workers/--record-dir/--backend
+│   ├── gen_cases.py                # ✅ P0 参数化 case 生成器（fillet 4 族 + chamfer 4 族，GT 几何第一性；--suite parametric 消费）
+│   ├── snapshot.py / test_baseline.py  # ✅ 离线基线回归门（冻 Conclusion + 重打分断言）
+│   ├── eval.sh                     # 一条命令入口（→ runner，透传 --case/--json/--policy/--suite）
+│   ├── baselines.md                # rule（A3）+ LLM（A5）基线 + A/B + P0 规模化 + P1b 真分/离线（分节登记）
 │   └── llm_decisions/              # ✅ A5 录制决策（replay 后端读 → 离线确定复现 A/B、零计费）
 ├── demo/                           # 可视 demo（真失败几何 + 结论 → Print viewer）
 │   ├── wedge_demo.py               # capture HS1/HS2(活失败现场) + investigate → session
+│   ├── chamfer_directional.py      # ✅ P1a C4 证伪：chamfer 双距方向轴根因（fillet 无此自由度）
 │   ├── view.sh                     # 起 daemon+bridge+viewer
 │   └── convex_concave/             # 凸/凹/可裁剪/几何不可能 四态对照 + DISPLAY_RULES.md
 └── trajectories/                   # 运行轨迹（G9，gitignore）
@@ -303,8 +318,8 @@ agent/
 
 - [ ] **S2/S4 深探针**：occdbg `get_surfdata`/`capture`/`set_probe`，吃滚球容纳(S2)、corner/twist(S4)；Agent 自主决定"下次在哪埋点"。
 - [ ] **置信度 / 主动弃权**：证据不足停在能站住的层并交人；度量 **abstention precision**。
-- [ ] **沙箱**：每 tool-call timeout + 资源上限 + per-case 隔离（worktree-per-case）+ 并发；OCCT 跨平台非确定性 → eval 比对容差归一化（临界值给容差带，不硬编码）。
-- [ ] **泛化**：本体已内核无关，抽出 domain-agnostic harness 层（protocol/session/eval/轨迹/本体），fillet 之外用 adapter 接 chamfer/boolean/offset。
+- [x] **沙箱 ✅（P0，2026-07-05）**：`eval/runner.py` 上 `ProcessPoolExecutor` case 级并行 + per-case 沙箱（独立 tmp 跑完即清）+ 预算（wall SIGALRM 软背板 / 子进程 `REPRO_TIMEOUT_S` 硬封顶 / 可选 `RLIMIT_AS`）+ **失败隔离**（subprocess 崩只落该行；worker 进程级死亡重跑隔离、只真凶 ERROR、健康兄弟恢复）；跨平台容差＝GT 参数留余量避临界带。实测 166 case/12 worker=10.8×、单 case 崩不杀全轮（`test_runner_scale`）。
+- [x] **泛化 ✅（P1a，2026-07-05）**：本体领域无关**从断言变实证**——一个 `op` 轴 + `chamfer-failures.json` 落 chamfer 第二域，判别器/scorer/runner op-无关复用，chamfer 族打分与 fillet 对偶逐层同分；转移账本 `chamfer-adapter-transfer.md`（1:1 复用/域特定/3 处诚实"崩"）+ C4 方向轴证伪 demo。⏳ boolean/offset 待；抽 domain-agnostic 层留后。
 
 **验收**：能完成至少 1 类需 SurfData 的局部根因；弃权有指标；eval 可并发且单 case 失败不拖垮整轮。
 **面试价值**：深度（算法内部采集）+ 成熟度（沙箱/弃权）+ 通用性（本体/adapter 解耦）。
@@ -352,10 +367,10 @@ A0 ─► A1(分层case+四元组GT+reproduce) ─► A2(工具+有效性判据+
 ### 操作备忘（新窗口接手必读）
 
 - **跑测试 / eval 一律从 repo 根** `python -m agent.xxx`——**别 `cd agent`**，否则 `import agent` 包导入失败（`ModuleNotFoundError: No module named 'agent'`）。
-- **全 test 一把过（18 模块）**：`for m in test_session test_trajectory test_review loop.test_decide_llm loop.test_investigate_ssi loop.test_investigate_cf loop.test_investigate_overflow loop.test_investigate_vertex loop.test_investigate_falsegreen eval.test_scorer tools.test_{reproduce,reproduce_crash,check_valid,triage_input,playbook,ssi_probe,capture,g26_realmodel}; do python -m agent.$m; done`（FreeCADCmd/LLDB 不在则相关项 SKIP，不算错）。
+- **全 test 一把过（23 模块，自动发现）**：`bash scripts/run-agent-tests.sh`（`find agent -name test_*.py`，人 & CI 单一真源；FreeCADCmd/LLDB 不在则相关项 SKIP，不算错）。新增：`eval.test_gen_cases`（第一性不变量）·`eval.test_runner_scale`（并行/沙箱/预算/隔离 + SIGKILL 故障注入）·`eval.test_mechanism_score`（机制真分分档）·`eval.test_offline_replay`（record→replay 字节一致 + 离线实证）。
 - **eval 跑法**：`bash agent/eval/eval.sh`（rule）；LLM 离线零计费复现 `AGENT_DECIDE_BACKEND=replay AGENT_DECIDE_RECORD=$PWD/agent/eval/llm_decisions bash agent/eval/eval.sh --policy llm`；重录真决策＝去掉 `AGENT_DECIDE_BACKEND=replay`（走 `claude_cli`，需 Claude Code 鉴权、产生计费）。
 - **改动未提交**（按约定 commit 等显式指示）；交接先 `git status` 看改动面。改工具契约 / case schema / eval 维度 / 失效本体，先更对应真源文档（本文件 / `playbook/blend-failure-ontology.md` / `docs/root-cause-verification.md`）。
-- **本文件即索引**：真实模型诊断输入看 §8(G26)；A/B 完整数据 + 复现命令看 `eval/baselines.md`；当前 11 case GT 看 `cases/*.json`（真实 STEP 资产在 `cases/models/`）。
+- **本文件即索引**：真实模型诊断输入看 §8(G26)；A/B 完整数据 + P0 规模化 + P1b 真分/离线看 `eval/baselines.md`；13 个手工真值 case 看 `cases/*.json`（真实 STEP 资产在 `cases/models/`）+ **P0 的 166 参数化套件**（`eval/gen_cases.py`，`--suite parametric`，fillet+chamfer 8 族）；chamfer 转移账本看 `playbook/chamfer-adapter-transfer.md`。
 
 ---
 
