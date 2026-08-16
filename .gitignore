@@ -16,3 +16,7 @@
 *.pyc
 .DS_Store
 
+# Interview prep materials — private, never pushed to the public repo.
+/INTERVIEW-PREP.md
+/interview-prep/
+
