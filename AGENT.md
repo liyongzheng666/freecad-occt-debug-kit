@@ -16,7 +16,7 @@ flowchart LR
     end
     subgraph LOOP[决策回路 loop/]
         INV[investigate<br/>observe→判别→分类→反事实→结论]
-        DEC[decide state<br/>rule | llm 同签名]
+        DEC[decide state<br/>rule / llm 同签名]
     end
     subgraph EVAL[eval/]
         RUN[runner<br/>166 case 并行+沙箱+隔离]

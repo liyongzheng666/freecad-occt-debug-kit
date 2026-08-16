@@ -7,25 +7,25 @@
 
 ```mermaid
 flowchart TB
-    subgraph REPO[本仓库 freecad-occt-debug-kit]
+    subgraph REPO["本仓库 freecad-occt-debug-kit"]
         SCR[scripts/ 构建·运行·自检]
         MESH[tools/occ-debug-mesh C++ CLI]
         AGENT[agent/ 诊断回路 + eval]
         DOC[docs/ + GEOMETRY/AGENT 轨道]
     end
-    subgraph FORKS[钉死的 fork（bootstrap.sh 克隆，不入本仓库）]
+    subgraph FORKS["钉死的 fork（bootstrap.sh 克隆，不入本仓库）"]
         OCC[liyongzheng666/OCCT<br/>v7_8_1-fillet-debug<br/>含 env_emit 插桩]
         FC[liyongzheng666/FreeCAD<br/>local-occt-integration @ 钉死 SHA]
         PRT[liyongzheng666/Print<br/>viewer + bridge + schema @ 钉死 SHA]
     end
-    subgraph TOOLCHAIN[pixi 锁定工具链]
+    subgraph TOOLCHAIN["pixi 锁定工具链"]
         CL[Clang 18 · CMake · Ninja · Qt]
     end
     OCCINST[occt/install/debug<br/>debug dylib + 头文件]
     FCBIN[FreeCAD/build/debug/bin/FreeCADCmd]
     MESHBIN[occ-debug-mesh 二进制]
 
-    SCR -->|configure-occt / rebuild-occ| OCCINST
+    SCR -->|"configure-occt / rebuild-occ"| OCCINST
     OCCINST -->|link| MESHBIN
     OCCINST -->|CMake preset local-occt-macos-debug| FCBIN
     CL --> OCCINST
@@ -35,8 +35,10 @@ flowchart TB
     AGENT -->|subprocess| MESHBIN
     AGENT -->|LLDB + OCCT_DEBUG_SSI_OUT| OCC
     AGENT -->|session 事件流| PRT
-    MESH -->|输出 mesh/geom/defects| PRT
-    SCR -->|克隆 + 钉死| OCC & FC & PRT
+    MESH -->|"输出 mesh/geom/defects"| PRT
+    SCR -->|克隆 + 钉死| OCC
+    SCR --> FC
+    SCR --> PRT
 ```
 
 ## 2. 版本钉板表（bootstrap.sh 是唯一真源）
