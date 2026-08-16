@@ -195,7 +195,9 @@ def occ_emit_shape(debugger, command, exe_ctx, result, _internal_dict):
     abspath = (session / "assets" / rel).resolve()
     abspath.parent.mkdir(parents=True, exist_ok=True)
 
-    expr = f'BRepTools::Write({varname}, "{abspath}")'
+    # OCCT 7.8: the 2-arg Write(shape, file) is gone; the file overload now needs an
+    # explicit Message_ProgressRange (lldb expr-eval does not apply C++ default args).
+    expr = f'BRepTools::Write({varname}, "{abspath}", Message_ProgressRange())'
     ret = frame.EvaluateExpression(expr)
     if ret.GetError().Fail():
         result.SetError(
@@ -345,7 +347,7 @@ def occ_emit_surface(debugger, command, exe_ctx, result, _internal_dict):
     abspath = (session / "assets" / rel).resolve()
     abspath.parent.mkdir(parents=True, exist_ok=True)
 
-    expr = f'BRepTools::Write({face_expr}, "{abspath}")'
+    expr = f'BRepTools::Write({face_expr}, "{abspath}", Message_ProgressRange())'
     ret = frame.EvaluateExpression(expr)
     if ret.GetError().Fail():
         result.SetError(

@@ -1,0 +1,25 @@
+# 圆角失效决策表（playbook）—— 每个节点挂在 blend-failure-ontology.md 的某阶段上。
+# 节点 schema 见 blend-failure-ontology.md §5。
+# 注意：query_playbook 实读的是 fillet-failures.json（环境无 PyYAML）。本文件 = 人读 schema 参考。
+#
+# - id: stripe-too-big-radius
+#   symptom:                       # 适配层：触发条件（不是结论）
+#     exception: "fillets have too big radiuses"
+#     phase: stripe-intersection
+#   proximate_stage: S3
+#   root_cause_candidates:         # 远端候选，用互斥靶向修法相互判别
+#     - stage: S0
+#       cause: "两支撑面近切 / sliver"
+#       localize:  { tool: triage_input, check: dihedral_angle }
+#       counterfactual: { fix: heal_input, must_not_change: radius }
+#     - stage: S2
+#       cause: "半径 > 局部凹曲率（球塞不进）"
+#       localize:  { tool: curvature_at_spine }
+#       counterfactual: { fix: lower_radius, discriminates_from: S3 }
+#     - stage: S3
+#       cause: "SSI 数值失败 / 近切不稳"
+#       localize:  { tool: ssi_probe, check: intersection_curve_count }
+#       mechanism: { evidence: "期望 1 条 contact 曲线，实得 0" }
+#       counterfactual: { fix: perturb_tolerance, must_not_change: radius }
+
+# 实际签名见 fillet-failures.json（已含 fillet-notdone-overflow：S0/S2/S3 三候选 + 互斥反事实）。

@@ -1,0 +1,36 @@
+{
+  "_note": "instrumented truth-run GT（G22）：薄楔近切支撑面 fillet 失败，LLDB capture 两支撑面实测近切。",
+  "case_id": "wedge-sliver",
+  "input": {
+    "builder": "wedge_prism",
+    "cross_section_xz": [[0, 0], [20, 0], [20, 0.6]],
+    "extrude_y": 8,
+    "radius": 1.0,
+    "edges": "all",
+    "note": "薄楔：底面与斜面沿长底边近切（斜率 0.6/20 → 夹角约 1.7°）"
+  },
+  "agent_run": { "case": "wedge", "radius": 1.0 },
+  "ground_truth": {
+    "true_chain": ["S2"],
+    "entities": ["edge#0"],
+    "entities_human": "近切失效现场 = 长底边 edge#0（底面 HS1 × 斜面 HS2 沿之近切 ~1.72°）。canonical token 用 triage 的确定性 OCCT 边序号；其 1.718° 与 truth_run LLDB 实测 1.72° 同一处，故非循环。",
+    "expected_evidence": "ChFi3d_Builder::StartSol 试 nbessaimax 次找不到起始解 → throw Standard_Failure('StartSol echec'); 支撑面夹角约 1.72°，半径 1.0 的滚球塞不进",
+    "aligned_fix": "lower_radius（缩到滚球能容纳的半径）或 heal 近切（增大夹角）",
+    "failure_class": "geometric_near_tangent",
+    "mechanism_truth": {
+      "signature": "s2_rolling_ball_infeasible",
+      "observable": { "min_dihedral_deg": 1.72, "n_section_edges": 1, "s3_signature": false },
+      "basis": "LLDB 抓 HS1/HS2 两支撑面（truth_run.ssi_probe_on_captured_faces）：近切 1.72° 但 section 有 1 条 contact 边 → 非 S3 退化、是 S2 滚球坐不住起始解(StartSol echec)。P1b 机制真分。",
+      "stage_reached": "S2"
+    }
+  },
+  "truth_run": {
+    "method": "LLDB `br set -E c++` 第一个 OCCT 抛出 → StartSol；再 capture_ssi 抓 HS1->Face()/HS2->Face() 跑 ssi_probe",
+    "site": "ChFi3d_Builder_2.cxx:944  ChFi3d_Builder::StartSol（HS1/HS2 = Handle(BRepAdaptor_Surface) 两支撑面，具名可抓）",
+    "stack": "StartSol ← PerformSetOfSurfOnElSpine(:1920) ← PerformSetOfKGen(:2594)",
+    "exception": "Standard_Failure: 'StartSol echec'（API 再包成 StdFail_NotDone 'command not done'）",
+    "ssi_probe_on_captured_faces": { "min_dihedral_deg": 1.72, "near_tangent": true, "n_section_edges": 1, "gap": 0.0, "s3_signature": false },
+    "captured": "2026-06-27, debug OCCT 7.8.1"
+  },
+  "key_insight": "离线 agent 看到的异常与 overflow 案（box-r5）相同（都被 API 包成 'command not done'），无法区分。是 S2-overflow（StripeEdgeInter，带重叠）还是 S2-近切（StartSol，塞不进），**只有 capture_ssi 抓真支撑面量夹角才能分**——这就是深埋点（capture）相对免埋点诊断的增量价值。"
+}

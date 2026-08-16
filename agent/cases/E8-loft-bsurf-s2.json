@@ -1,0 +1,16 @@
+{
+  "_note": "决策空间②/S2-bsurf 真实 case（G4 第一个 B-surface case，2026-07-02③）：方转圆 loft（BSplineSurface 侧面），fillet 顶圆边（BSplineSurface×Plane）。r=1/3/5 全部假绿（IsDone=true 但 invalid，自交×2 + Unorientable）——参数支撑面上 blend 面构造写坏几何（Parasolid bsurf_c 族：B-surface 偏移有界/延伸受限）。STEP models/E8_loft_bspline.step，读回边号 #3（#13 亦假绿；#7/#10/#15 valid）。",
+  "case_id": "E8-loft-bsurf-s2",
+  "input": { "builder": "step", "path": "agent/cases/models/E8_loft_bspline.step", "radius": 3.0, "edges": "3" },
+  "agent_run": { "case": "step:agent/cases/models/E8_loft_bspline.step", "radius": 3.0, "edges": "3" },
+  "labels": { "convexity": "convex", "topo": "single-edge-bsurf", "radius": "constant", "regime": "false-green" },
+  "ground_truth": {
+    "true_chain": ["S2", "S6"],
+    "entities": [],
+    "entities_human": "缺陷面 F2(BSplineSurface)/F9(Plane) run-scoped；根因证据是支撑面类型（BSplineSurface）非缺陷位置。",
+    "expected_evidence": "IsDone=true + invalid（自交×2 + Unorientable）；falsegreen_probe：support_types 含 BSplineSurface → fg_support fired（最 distal，S3/S4 无需抢）",
+    "aligned_fix": "避免直接在 BSpline 支撑面上 blend（先转解析/分割面）；半径无关（r=1/3/5 全假绿），降半径无效",
+    "failure_class": null,
+    "_failure_class_note": "同 E7：假绿签名不用四态。"
+  }
+}

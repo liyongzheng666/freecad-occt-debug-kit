@@ -1,0 +1,37 @@
+{
+  "_note": "instrumented truth-run GT（G22）：box r=5 全边 fillet，LLDB 抓真实崩溃点。",
+  "case_id": "box-r5",
+  "input": { "builder": "box", "dims": [10, 20, 30], "radius": 5.0, "edges": "all(12)" },
+  "agent_run": { "case": "box", "radius": 5.0 },
+  "ground_truth": {
+    "true_chain": ["S2", "S3"],
+    "entities": ["stripe1@S2", "stripe2@S2"],
+    "entities_human": "相邻两 fillet 带 stripe1 × stripe2（aDat1/aDat2 SurfData）——S2 中间面，免埋点诊断无法命名（triage 只看输入边/面），需 A7 capture 抓活几何才能回填这俩 token。故 box 当前 entity 召回应为 0、定位止于 stage——这正是 capture 相对免埋点的实体级定位增量。",
+    "expected_evidence": "ChFi3d_StripeEdgeInter：两带 pcurve 经 Geom2dInt_GInter 求交，NbPoints/NbSegments>0（带相互重叠）→ 抛 StdFail_NotDone",
+    "aligned_fix": "SSI 互裁(trim)：两相邻圆角面求交+互裁得合法结果（algorithmic_overflow，几何可救）；降半径(≤可行上界[2,5))亦可但非必需",
+    "failure_class": "algorithmic_overflow",
+    "mechanism_truth": {
+      "signature": "s3_degenerate_contact",
+      "observable": { "n_section_edges": 0, "s3_signature": true },
+      "basis": "env_emit 真抓两 blend 圆柱面（capture_result.ssi_probe，非 fixture）：两带落同一 R5 圆柱、接触曲线退化为零。P1b 机制真分——预测机制 vs 此真值（非深度代理）。",
+      "stage_reached": "S3"
+    }
+  },
+  "truth_run": {
+    "method": "LLDB `br set -E c++` → 跳过 2 个 macOS Security 框架异常 → 第一个 OCCT 抛出",
+    "site": "ChFi3d_Builder_0.cxx:2766  ChFi3d_StripeEdgeInter",
+    "stack": "StripeEdgeInter ← ChFi3d_Builder::Compute(ChFi3d_Builder.cxx:324) ← BRepFilletAPI_MakeFillet::Build(:527)",
+    "exception": "StdFail_NotDone: 'StripeEdgeInter : fillets have too big radiuses'",
+    "captured": "2026-06-27, debug OCCT 7.8.1（OSO 调试映射完好，断点能绑）"
+  },
+  "agent_match": "investigate(box, r=5) → 根 S2 / radius_probe 命中可行上界[2.5,5) / S3 env_emit fired（s3_signature=True：两 blend 圆柱面近切 0.0° + section=0）—— 与真值 root=S2 一致 ✅；S3 机制现已从 untestable → fired（实真实 blend 面，非 fixture）。定位 0.70（stage 满分/entity 0——两带句柄 stripe1/2@S2 无法免埋点命名，entity 维止于 stage 级）。",
+  "capture_result": {
+    "method": "env_emit（ChFi3d_Builder_0.cxx::StripeEdgeInter 改造：DStr 具名化 + OCCT_DEBUG_SSI_OUT 门控 BRepTools::Write，2026-06-30；需重编译 debug TKFillet）",
+    "blend1": "Geom_CylindricalSurface R=5，axis=Z(0,0,1)，origin≈(5,5,0)（BREP 原值 4.9999999999999991,4.9999999999999991,0）",
+    "blend2": "Geom_CylindricalSurface R=5，axis=Z(0,0,1)，origin≈(5,5,0)（BREP 原值 5.0000000000000009,4.9999999999999991,0），仅 u 参数方向翻转",
+    "geometry_note": "两 blend 带是**同一条** R=5 圆柱面（同轴同径，origin 仅差 ~1e-15/ULP 级），几何重合——非'近切'亦非'轴平行相切'，而是重叠退化。",
+    "ssi_probe": "s3_signature=True near_tangent=True min_dihedral=0.0° n_section_edges=0",
+    "interpretation": "两 fillet 带落在同一张圆柱面上 → 面面求交无有界接触曲线（section_edges=0）→ S3 接触退化。这正是 StripeEdgeInter 'too big radiuses'（2D pcurve overlap）在 3D 面层的表现：两带重叠、接触面积为零。已经 env_emit 真实抓取验证（非 fixture），BREP 原文见 capture 落盘。"
+  },
+  "note_failure_mode": "这是 overflow（带重叠，接触曲线退化）。ssi_probe 对两张 blend 面确实给出 s3_signature=True（两圆柱 0°，section=0）——env_emit 路径已证。radius_probe(S2) + ssi_probe(S3) 双腿均 fired；根因仍 S2（降半径有效/扰容差无效 → counterfactual 判 [S2]），S3 是传播端（proximate）。"
+}

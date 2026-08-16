@@ -18,4 +18,5 @@ find_package(OpenCASCADE REQUIRED)
 add_executable(occ-debug-mesh src/main.cxx)
 target_include_directories(occ-debug-mesh PRIVATE ${OpenCASCADE_INCLUDE_DIR})
 target_link_libraries(occ-debug-mesh PRIVATE
-  TKernel TKMath TKG2d TKG3d TKGeomBase TKBRep TKGeomAlgo TKTopAlgo TKMesh TKPrim)
+  TKernel TKMath TKG2d TKG3d TKGeomBase TKBRep TKGeomAlgo TKTopAlgo TKMesh TKPrim
+  TKBO)  # (O1) BOPAlgo_CheckerSI face-face self-intersection

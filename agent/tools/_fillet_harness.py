@@ -1,0 +1,156 @@
+"""FreeCAD 侧 fillet 复现 harness —— 在 FreeCADCmd 进程内运行（**不是 agent 包的一部分**）。
+
+由 reproduce.py 通过环境变量驱动。为什么用 env 而非 argv：FreeCADCmd 把脚本之后的位置
+参数当作"要打开的文档"，会报 `File format not supported`，故参数只能走环境变量：
+
+  REPRO_CASE      case 几何构建器 id（如 "box" / "box-flat"）
+  REPRO_RADIUS    fillet 半径
+  REPRO_EDGES     可选，逗号分隔的边序号（1-based，对 shape.Edges）；空=全部边
+  REPRO_TOLERANCE 可选，fillet 前对几何 fixTolerance(值)——A7 WP3 互斥反事实：只动容差不动半径
+  REPRO_OUT_BREP  结果 BREP 导出路径（成功产出形状时写）
+  REPRO_OUT_JSON  RunEnd JSON 输出路径（始终写）
+
+输出 RunEnd（架构 §24 子集）：{status, exception, phase, is_done, bad_shape}。
+⚠️ status 仅表"recompute 是否跑完并产出形状"，**不是几何有效性**——有效性由 check_valid
+判（全项目禁用裸 IsDone()）。这样 reproduce 不偷偷依赖 check_valid，两者在 loop 里组合。
+"""
+import json
+import os
+import traceback
+
+
+def build_shape(case):
+    import Part
+    # G26 真实模型输入：case 带 brep:/step:/file: 前缀 → 从磁盘读整个 shape（BREP/STEP）。
+    # 走现成 Part.Shape().read()（按扩展名选 reader，同 _ssi_harness.load_face）；这里要整个
+    # solid（非 Faces[0]）。要求绝对路径（FreeCADCmd cwd 不保证）。
+    scheme = case.split(":", 1)[0]
+    if scheme in ("brep", "step", "file"):
+        s = Part.Shape()
+        s.read(case.split(":", 1)[1])
+        return s
+    # O2：FCStd 直读——FCStd 是 FreeCAD 文档（对象+参数化历史），非裸 shape 文件，read() 不行。
+    # openDocument → 遍历对象取带非空 solid 者，默认最后一个（通常是最终特征/结果）；可选
+    # `fcstd:/abs.FCStd#ObjName`（Name 或 Label）选择器消歧。绝对路径（FreeCADCmd cwd 不保证）。
+    if scheme == "fcstd":
+        import FreeCAD as App
+        path, _, objname = case.split(":", 1)[1].partition("#")
+        doc = App.openDocument(path)
+        cands = [o for o in doc.Objects
+                 if getattr(o, "Shape", None) is not None
+                 and not o.Shape.isNull() and o.Shape.Solids]
+        if objname:
+            cands = [o for o in cands if o.Name == objname or o.Label == objname]
+        if not cands:
+            raise ValueError(f"FCStd 无可用 solid（{objname or '任意对象'}）：{path}")
+        return cands[-1].Shape                   # 默认最后一个带 solid 的对象
+    # P0 规模化：参数化几何族——把 box/pocket/wedge 三个已验证 builder 的**尺寸/半径**开成
+    # 可扫描参数，供 eval/gen_cases.py 批量造 100+ case（GT 走几何第一性，见 gen_cases 文档）。
+    # 形状构造逐字对齐下方定值 builder（同族同几何），只把常量换成参数——不引入新失效物理。
+    if scheme in ("boxp", "pocketp", "wedgep"):
+        nums = [float(x) for x in case.split(":", 1)[1].split(",") if x.strip()]
+        if scheme == "boxp":                     # boxp:LX,LY,LZ —— 对齐 "box"（overflow 族）
+            lx, ly, lz = nums
+            return Part.makeBox(lx, ly, lz)
+        if scheme == "pocketp":                  # pocketp:BX,BY,BZ,RC —— 对齐 "pocket"（曲率族）
+            bx, by, bz, rc = nums
+            import FreeCAD as App
+            V = App.Vector
+            # 盲孔比例对齐定值 pocket（16,16,10,rc=3 → base z=BZ*0.3, 高=BZ*0.8）；凹壁曲率半径=RC
+            return Part.makeBox(bx, by, bz).cut(
+                Part.makeCylinder(rc, bz * 0.8, V(bx / 2, by / 2, bz * 0.3)))
+        # wedgep:LEN,TIP,WIDTH —— 对齐 "wedge"（近切族）；二面角≈atan(TIP/LEN)
+        length, tip, width = nums
+        import FreeCAD as App
+        V = App.Vector
+        pts = [V(0, 0, 0), V(length, 0, 0), V(length, 0, tip)]
+        return Part.Face(Part.makePolygon(pts + [pts[0]])).extrude(V(0, width, 0))
+    if case == "box":
+        return Part.makeBox(10, 20, 30)          # 经典盒子；最短边 10
+    if case == "box-flat":
+        return Part.makeBox(30, 20, 2)           # 薄板：半径稍大即 overflow
+    if case == "wedge":                          # 薄楔：两支撑面近切 ~1.7°，滚球塞不进 → StartSol echec(S2 近切)
+        import FreeCAD as App
+        V = App.Vector
+        pts = [V(0, 0, 0), V(20, 0, 0), V(20, 0, 0.6)]
+        return Part.Face(Part.makePolygon(pts + [pts[0]])).extrude(V(0, 8, 0))
+    if case == "pocket":                         # 盲孔 r=3：凹腔曲率半径 3，fillet r>3 的滚球比孔还大 → S2 geometric(曲率)
+        import FreeCAD as App
+        V = App.Vector
+        return Part.makeBox(16, 16, 10).cut(Part.makeCylinder(3, 8, V(8, 8, 3)))
+    if case == "wedge-thin":                     # 极薄楔 ~0.011°：可行半径低于 radius_probe 阶梯下限(0.2%×requested) → 候选全 ruled_out/untestable → loop 内弃权
+        import FreeCAD as App
+        V = App.Vector
+        pts = [V(0, 0, 0), V(20, 0, 0), V(20, 0, 0.004)]
+        return Part.Face(Part.makePolygon(pts + [pts[0]])).extrude(V(0, 8, 0))
+    raise ValueError("unknown case: " + str(case))
+
+
+def select_edges(shape, spec):
+    if not spec:
+        return shape.Edges
+    idx = [int(x) for x in spec.split(",") if x.strip()]
+    return [shape.Edges[i - 1] for i in idx]     # 1-based
+
+
+def phase_of(msg):
+    m = msg.lower()
+    if "notdone" in m or "not done" in m:
+        return "fillet_notdone"                  # ChFi3d 未完成（S2 滚球容纳 / S3 求交，待 agent 细分）
+    return "unknown"
+
+
+def main():
+    out_json = os.environ["REPRO_OUT_JSON"]
+    case = os.environ.get("REPRO_CASE", "box")
+    radius = float(os.environ.get("REPRO_RADIUS", "1.0"))
+    out_brep = os.environ.get("REPRO_OUT_BREP") or None
+    result = {"status": "failed", "exception": None, "phase": None,
+              "is_done": None, "bad_shape": None}
+    try:
+        shape = build_shape(case)
+        if radius <= 0:                           # 仅导出基础几何（S0 输入预检用），不 fillet
+            result["is_done"] = None
+            result["phase"] = "input_export"
+            if out_brep:
+                shape.exportBrep(out_brep)
+                result["bad_shape"] = out_brep
+            result["status"] = "ok"
+        else:
+            tol = os.environ.get("REPRO_TOLERANCE")
+            if tol:                                   # WP3 互斥反事实：只动容差、不动半径
+                shape.fixTolerance(float(tol))
+            edges = select_edges(shape, os.environ.get("REPRO_EDGES", ""))
+            # P1a：op 轴——fillet(默认，makeFillet(radius,edges)) | chamfer(makeChamfer(dist,edges)，
+            # 或 REPRO_DIST2 时双距 makeChamfer(d1,d2,edges))。radius 即倒角距离（不改名避免调用方 churn）。
+            op = os.environ.get("REPRO_OP", "fillet")
+            dist2 = os.environ.get("REPRO_DIST2")
+            try:
+                if op == "chamfer":
+                    built = (shape.makeChamfer(radius, float(dist2), edges) if dist2
+                             else shape.makeChamfer(radius, edges))
+                else:
+                    built = shape.makeFillet(radius, edges)
+                result["is_done"] = True
+                if out_brep:
+                    built.exportBrep(out_brep)
+                    result["bad_shape"] = out_brep
+                result["status"] = "ok"          # 跑完产出形状；有效性留给 check_valid
+            except Exception as e:                # 算法失败（典型 StdFail_NotDone，fillet/chamfer 同串）
+                result["is_done"] = False
+                result["exception"] = type(e).__name__ + ": " + str(e)
+                result["phase"] = phase_of(str(e))
+    except Exception as e:                         # harness/几何构建本身崩
+        result["exception"] = "harness: " + type(e).__name__ + ": " + str(e)
+        result["phase"] = "harness"
+        result["traceback"] = traceback.format_exc()
+
+    with open(out_json, "w") as fp:
+        json.dump(result, fp, ensure_ascii=False)
+
+
+# reproduce 经 `FreeCADCmd _fillet_harness.py` + REPRO_OUT_JSON 驱动时跑 main()；
+# capture 的 fail_script 仅 `from _fillet_harness import build_shape`（无该 env）→ 不自动跑，
+# 否则 import 即触发 main() 读不到 REPRO_OUT_JSON 而抛、脚本在 makeFillet 前就死（断点不命中）。
+if os.environ.get("REPRO_OUT_JSON"):
+    main()

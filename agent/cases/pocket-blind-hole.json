@@ -1,0 +1,36 @@
+{
+  "_note": "几何真值 GT（非 LLDB 埋点）：盲孔 r=3，fillet r>3 的滚球比凹腔还大 → S2 geometric(曲率型)。补齐失效三态的第三态 geometric_curvature。",
+  "case_id": "pocket-blind-hole",
+  "input": {
+    "builder": "pocket",
+    "construct": "box(16,16,10) cut cylinder(r=3, h=8 @ (8,8,3))",
+    "radius": 4.0,
+    "edges": "all",
+    "note": "盲孔：凹腔曲率半径 3（孔壁 face#6 = Part.Cylinder r=3）。fillet r=4 的滚球半径 > 凹曲率半径 → 塞不进。"
+  },
+  "agent_run": { "case": "pocket", "radius": 4.0 },
+  "ground_truth": {
+    "true_chain": ["S2"],
+    "entities": ["face#6"],
+    "entities_human": "失效现场 = 盲孔孔壁 face#6（Part.Cylinder 凹曲率半径 3）。canonical token 用 triage 的确定性 OCCT 面序号；triage 独立量出 face#6 的曲率半径 3 = 几何真值的凹曲率，故匹配非循环。",
+    "expected_evidence": "滚球半径 r=4 > 凹腔曲率半径 3 → 凹角处放不下半径 4 的球 → ChFi3d 滚球面建不出 → StdFail_NotDone。radius_probe 可行/不可行边界恰落在曲率半径 3 上（r=2 可行 < 3 < r=3.5 不可行）。",
+    "aligned_fix": "lower_radius（≤ 凹曲率半径 3）或 改输入孔径（扩大孔径 R≥r）。降半径之外无解（几何不可救）。",
+    "failure_class": "geometric_curvature",
+    "mechanism_truth": {
+      "signature": "s2_rolling_ball_infeasible",
+      "observable": { "min_support_curv_radius": 3.0, "feasible_bound": [2.0, 4.0] },
+      "basis": "triage 独立量出孔壁 face#6 凹曲率半径 3.0 + radius_probe 可行/不可行边界落在其上（r=2 可行 <3< r=3.5 不可行）→ 滚球半径 4>3 塞不进(S2 曲率)。P1b 机制真分。",
+      "stage_reached": "S2"
+    }
+  },
+  "truth_run": {
+    "method": "几何第一性原理 + radius_probe 边界证据（非 LLDB 埋点）",
+    "basis": "曲率型失效是几何必然：凹腔曲率半径 R 处放不下半径 r>R 的滚球，无合法 blend 面存在——不依赖具体算法实现，故无需埋点即为真值（区别于 box overflow 的算法性失效，那个需 LLDB 确认 StripeEdgeInter）。",
+    "probe_evidence": "reproduce(pocket): r=2.0 跑完产有效形状(< 曲率半径 3) / r=3.5、4.0、5.0 均 StdFail_NotDone(> 3)；可行上界 ∈ [2.0, 4.0)，边界贴合凹曲率半径 3。",
+    "triage_corroboration": "triage_input(pocket) 独立量出 min_support_curv_radius=3.0 @ face#6（Part.Cylinder）——与几何真值一致。",
+    "lldb_truth_run": "可选/待补：若要拿到 ChFi3d 精确崩点（预期 StartSol/滚球面构造段），同 box/wedge 用 `br set -E c++` 抓第一个 OCCT 抛出。当前 GT 不依赖它。",
+    "captured": "2026-06-28"
+  },
+  "agent_match": "investigate(pocket, r=4) → 根 S2 / radius_probe 命中可行上界[2.0,4.0) / triage 判 geometric_curvature(r=4>3) + 实体级定位 face#6 —— 与几何真值 root=S2 / failure_class=geometric_curvature / 现场 face#6 全一致 ✅",
+  "note_failure_mode": "这是曲率型(凹腔放不下球)，与 box overflow(带重叠)、wedge near-tangent(支撑面近切) 三态互不相同——本 case 补齐三态覆盖的第三态。"
+}

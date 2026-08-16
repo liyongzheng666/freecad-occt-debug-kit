@@ -1,0 +1,15 @@
+{
+  "_note": "P0.1（补足计划 P0.1）：Parasolid §77.4 Overlapping blends 的最小复现——5x5x60 细杆 4 长边 r=3（>2.5 半宽）两带重叠。STEP 资产 models/E2_thinbar_overlap_r3.step，verified_fillet=NotDone（gen_final.py 实跑）。edges 为读回 STEP 后的 1-based 边号（verify_models.py 核定）。",
+  "case_id": "E2-thinbar-overlap",
+  "input": { "builder": "step", "path": "agent/cases/models/E2_thinbar_overlap_r3.step", "radius": 3.0, "edges": "1,3,5,7", "dims": [5, 5, 60] },
+  "agent_run": { "case": "step:agent/cases/models/E2_thinbar_overlap_r3.step", "radius": 3.0, "edges": "1,3,5,7" },
+  "labels": { "convexity": "convex", "topo": "multi-edge", "radius": "constant", "regime": "overflow" },
+  "ground_truth": {
+    "true_chain": ["S2"],
+    "entities": [],
+    "entities_human": "相邻两 fillet 带 stripe×stripe（S2 中间面）——与 box-r5 同性质，句柄埋 StripeEdgeInter 匿名 DStr，免埋点无法命名 → entity 维止于 stage（非待兑现）。",
+    "expected_evidence": "多边(≥2) blend，两相邻带 pcurve 经 Geom2dInt_GInter 求交有交点 → StdFail_NotDone 'too big radiuses'",
+    "aligned_fix": "SSI 互裁(trim)（几何可救，algorithmic_overflow）；降半径≤2.5 亦可但非必需",
+    "failure_class": "algorithmic_overflow"
+  }
+}

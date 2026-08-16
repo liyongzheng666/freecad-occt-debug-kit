@@ -1,0 +1,28 @@
+{
+  "_note": "区分度 case（loop 内弃权 / 过度弃权）：极薄楔 ~0.011°，真根是 S2（半径相对近切几何过大），可行滚球半径 ≤0.001——低于 radius_probe 阶梯下限(0.2%×requested=0.002)。规则版扫遍阶梯无可行半径 → S0/S2 ruled_out、S3 untestable → loop 内弃权。这是【过度弃权/wrong_abstain】：根本可定位（更细的探测/'极薄楔→极小半径'的领域推理能命中 S2），规则探针太粗而漏。",
+  "case_id": "wedge-thin-abstain",
+  "input": {
+    "builder": "wedge-thin",
+    "cross_section_xz": [[0, 0], [20, 0], [20, 0.004]],
+    "extrude_y": 8,
+    "radius": 1.0,
+    "edges": "all",
+    "note": "~0.011° 极薄楔。fillet 在 0.002~1.0 全失败，可行仅 r≤0.001（实测）。"
+  },
+  "agent_run": { "case": "wedge-thin", "radius": 1.0 },
+  "ground_truth": {
+    "true_chain": ["S2"],
+    "entities": [],
+    "expected_evidence": "fillet 在 radius_probe 阶梯全档（0.5→0.002，即 0.2%×requested）均 StdFail_NotDone；可行半径 ≤0.001（reproduce 实测 r=0.001 产有效形状）——低于阶梯下限，故规则探针扫不到。",
+    "aligned_fix": "lower_radius 至 ≤0.001（极小，低于默认探针下限）或 heal 近切（增大楔角）。",
+    "failure_class": "geometric_near_tangent",
+    "expected_abstain": false
+  },
+  "truth_run": {
+    "method": "reproduce 半径扫描（非 LLDB；定位力边界由可行半径 vs 探针下限决定）",
+    "probe_evidence": "wedge-thin(0.004): r∈[0.002,1.0] 全 NotDone；r≤0.001 产有效形状 → 真根 S2（近切/半径过大），可行半径存在但 <0.002。",
+    "captured": "2026-06-28"
+  },
+  "agent_match": "investigate(wedge-thin, r=1) → playbook 命中 → S0 ruled_out / S2 ruled_out（阶梯内无可行半径）/ S3 untestable → 全未命中 → 弃权『证据不足，交人兜底』。= wrong_abstain（过度弃权）：根 S2 本可定位（可行半径在阶梯下限之下），规则探针太粗漏掉。",
+  "note_discrimination": "区分价值：① 触发 **loop 内弃权**路径（候选全 ruled_out/untestable），区别于 box-clean 的 branch-B clean 弃权。② 填 **wrong_abstain** 混淆格 → abstention precision 从 1.00 掉到 0.5（规则基线真实弱点：探针分辨率有限 → 过度弃权）。③ 弃权 case 定位记 n/a 不混入定位准确率（分账：定位=承诺时算，弃权对错=abstention 维）。A5 目标：自适应探针 / 领域推理（极薄楔→极小半径）把 wrong_abstain 转成 correct_commit。"
+}

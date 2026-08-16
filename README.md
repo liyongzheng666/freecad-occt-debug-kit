@@ -21,6 +21,29 @@ freecad/                  工作区配置、脚本与文档（本仓库）
 
 也就是说，**本仓库的全新 clone 只包含配置层加上 `occ-debug-mesh` 工具**，不含 FreeCAD、OCCT 或 Print 源码。按[从全新克隆引导环境](#从全新克隆引导环境)把它变成可构建、可调试的环境。本 kit 如何喂给 Print viewer，见[架构与 Print 依赖](#架构与-print-依赖)。
 
+## 项目现状总览
+
+本工作区是一套 **FreeCAD / OCCT 圆角失败根因诊断** 的完整栈——从可复现构建、几何采集，到自动化的根因诊断 agent 与量化 eval。四层子系统各自的成熟度：
+
+| 子系统 | 落点 | 状态 |
+| --- | --- | --- |
+| 环境 / 构建层 | pinned forks + pixi + 幂等 `scripts/bootstrap.sh` | 成熟：一条命令从裸 clone 到可调试 |
+| 几何工具 | `tools/occ-debug-mesh/`（BREP → mesh/geom/defect + BOP 面面自交校验） | 成熟：60+ 离线断言 + 夹具回归 |
+| Agent（根因回路）+ Eval（量化） | `agent/`（observe→定位→机制→反事实→结论 + 五维打分 + rule/LLM A/B） | v0 投产，13-case；详见 [agent/README.md](agent/README.md) |
+| CI + 护栏 | GitHub Actions 离线单测门 + eval 基线回归门 + `workspace-doctor.sh` | 新落地（见下「最近加固」） |
+
+### 最近一轮加固（2026-07-04，剖析驱动，6 PR #7–#12）
+
+针对"手动断言 / 装饰性代理 / 静默失效"三类隐患的系统性补强：
+
+- **CI + 基线回归门**：接 GitHub Actions 跑 `agent/` 全套离线单测（无 OCCT 干净 SKIP）；`eval/test_baseline.py` 把 baselines 数字**冻结成 CI 断言**（Conclusion 快照重打分），scorer/聚合一漂移即变红。
+- **反事实真分**：eval 的反事实维从"仅判是否携带修法"升为"与 GT 比对的真判别分"（5 维里补掉第一个装饰性代理）。
+- **面面自交检测**：`check_valid` 补 `BOPAlgo_ArgumentAnalyzer`，堵"IsDone + BRepCheck 过但两面互穿"的假绿盲区（reward signal 完整性）——对现有 case 零回归，由基线门确认。
+- **真实模型输入**：`build_shape` 支持 `fcstd:` 直读用户 FreeCAD 文档（从合成 case 跨到真实模型诊断）。
+- **插桩耐久护栏**：`workspace-doctor.sh` 校验 `OCCT_DEBUG_SSI_OUT` 源码改造在源+已装 dylib 在位，把 WP5 静默失效变显式告警。
+
+> 完整路线图、gap register（G1–G30）与逐项进展见 [agent/README.md](agent/README.md)；本次加固每项都经 CI 两版 Python 绿灯 + 基线门零漂移把关后合并。
+
 ## 从全新克隆引导环境
 
 本 kit 的 clone 只含配置层。一条命令把它变成可构建、可调试的环境：
@@ -66,7 +89,7 @@ scripts/workspace-doctor.sh --runtime
 
 注意：
 
-- OCCT 的两处本地改动现维护在 fork `liyongzheng666/OCCT` 的 `v7_8_1-fillet-debug` 分支上（已 commit，不再是工作树补丁）：在 Debug 构建中保留 debug map，使 LLDB 能绑定断点（否则 `-Wl,-s` 会将其 strip 掉）；以及一处 Clang 18 要求的 FreeType `tags` 强制转换。`patches/occt-debug-build.patch` 仅作为该 delta 的可读参考保留。排查表见 [docs/occt-debugging.md](docs/occt-debugging.md)。
+- OCCT 的三处本地改动现维护在 fork `liyongzheng666/OCCT` 的 `v7_8_1-fillet-debug` 分支上（不再是工作树补丁）：① 在 Debug 构建中保留 debug map，使 LLDB 能绑定断点（否则 `-Wl,-s` 会将其 strip 掉）；② 一处 Clang 18 要求的 FreeType `tags` 强制转换；③（2026-07-01）`ChFi3d_Builder_0.cxx::ChFi3d_StripeEdgeInter` 经 `OCCT_DEBUG_SSI_OUT` 环境变量门控落盘两 blend 面（纯加法，无该 env 时行为不变），供 agent 免-LLDB 抓 overlap 型 S3 失败现场（A7 WP5）。①② 已 push 到 fork；③ 本地已 commit，push 到 fork 后 fresh clone 即含（否则 `env_emit` capture 退回 untestable，不伪绿）。`patches/occt-debug-build.patch` 仅作为 ①② delta 的可读参考保留。排查表见 [docs/occt-debugging.md](docs/occt-debugging.md)。
 - FreeCAD 从 fork `liyongzheng666/FreeCAD` 的 `local-occt-integration` 分支钉死在 commit `2b7e9a6896b`（`FreeCAD/main` 的祖先），当前与上游零 diff、精确可复现；本 kit 仍把仅本地的 CMake preset 与 `TOPONAMING.md` 参考说明从 `templates/` 还原进去（见上一步第 3 步）。
 - 构建完成后，用 `code .` 打开工作区，并从[从这里开始](#从这里开始)继续。
 

@@ -1,0 +1,85 @@
+{
+  "_note": "STEP fixtures reproducing Parasolid 'Blending' volume examples/failure modes. Every model VERIFIED by an actual Part.makeFillet run via the AGENT'S read path (Part.Shape().read() then makeFillet in an ISOLATED fresh FreeCADCmd process — verify_models.py). target_edges_1based = edge index AFTER STEP round-trip (Part.Shape().read()), which differs from the in-memory build order; these are the numbers the agent's --edges takes. OCCT 7.8.1 debug, FreeCAD 1.2.",
+  "_corrections": "vs first draft: E4 target edge 7->8 and E5 7->6 (STEP round-trip renumbers edges); E4 is NOT a crash case — in an isolated process it is a FALSE-GREEN (IsDone=true but isValid=false) at r=15/20 and clean NotDone at r>=30; the earlier exit-139 segfault was a same-process multi-radius accumulation artifact, not isolated-reproducible.",
+  "occt": "7.8.1 (debug, FreeCAD 1.2)",
+  "verification_cmd": "per-model isolated FreeCADCmd process, scratchpad/verify_models.py",
+  "models": [
+    {
+      "model_id": "E1_swept_block_r5", "step": "E1_swept_block_r5.step",
+      "n_edges": 12, "target_edges_1based": [1], "radius": 5.0,
+      "parasolid_ref": "10.4.5 Add an edge blend (PK_EDGE_set_blend_constant + PK_BODY_fix_blends)",
+      "failure_mode": "clean rolling-ball on one edge (SUCCESS)",
+      "agent_coverage_gap": "single-edge constant-blend success (agent should abstain-correct)",
+      "verified_fillet": {"is_done": true, "is_valid": true, "n_faces": 7, "exception": null}
+    },
+    {
+      "model_id": "E2_thinbar_overlap_r3", "step": "E2_thinbar_overlap_r3.step",
+      "n_edges": 12, "target_edges_1based": [1, 3, 5, 7], "radius": 3.0,
+      "parasolid_ref": "77.4 Overlapping blends; OCCT ChFi3d_StripeEdgeInter 'too big radiuses'",
+      "failure_mode": "algorithmic_overflow: adjacent bands overlap (r=3>2.5 half)",
+      "agent_coverage_gap": "minimal band-overlap (4 edges) distinct from box-r5",
+      "case_json": "cases/E2-thinbar-overlap.json",
+      "verified_fillet": {"is_done": false, "is_valid": false, "n_faces": 0, "exception": "OCCError: StdFail_NotDone"}
+    },
+    {
+      "model_id": "E3_thinplate_loop_overflow_r5", "step": "E3_thinplate_loop_overflow_r5.step",
+      "n_edges": 12, "target_edges_1based": [1], "radius": 5.0,
+      "parasolid_ref": "77.3.4 Blend completely overlaps edge loop (range extends outside solid)",
+      "failure_mode": "face_overflow: single-band blend leaves face / edge loop (r=5>3 thickness)",
+      "agent_coverage_gap": "NEW face_overflow class (P2.1) — was misclassified as algorithmic_overflow",
+      "case_json": "cases/E3-thinplate-face-overflow.json",
+      "verified_fillet": {"is_done": false, "is_valid": false, "n_faces": 0, "exception": "OCCError: StdFail_NotDone"}
+    },
+    {
+      "model_id": "E4_concave_groove_r8", "step": "E4_concave_groove_r8.step",
+      "n_edges": 18, "target_edges_1based": [8], "radius": 8.0,
+      "parasolid_ref": "77.3.6 Range of blend on face too large / Fig77-7 rolling ball stuck",
+      "failure_mode": "concave R6 groove edge; ISOLATED: r=8 success, r=15/20 FALSE-GREEN (IsDone-but-invalid), r>=30 NotDone",
+      "agent_coverage_gap": "P1.2 false-green on a real model (reproduce ok/is_done=true, check_valid invalid)",
+      "case_json": "cases/E4-groove-false-green.json (uses r=15)",
+      "verified_fillet": {"is_done": true, "is_valid": true, "n_faces": 9, "exception": null},
+      "verified_variants": {
+        "r15": {"is_done": true, "is_valid": false, "note": "FALSE-GREEN"},
+        "r20": {"is_done": true, "is_valid": false, "note": "FALSE-GREEN"},
+        "r30": {"is_done": false, "is_valid": false, "note": "NotDone"}
+      }
+    },
+    {
+      "model_id": "E5_overflow_boss_r20", "step": "E5_overflow_boss_r20.step",
+      "n_edges": 28, "target_edges_1based": [6], "radius": 20.0,
+      "parasolid_ref": "Ch74 Edge Blend Overflows / Fig74-9 (blend leaves face onto a boss)",
+      "failure_mode": "face_overflow onto neighbour: OCCT HANDLES r<=~15, NotDone at r=20",
+      "agent_coverage_gap": "NEW face_overflow class (P2.1); overflow phenomenon absent from ontology",
+      "case_json": "cases/E5-boss-face-overflow.json",
+      "verified_fillet": {"is_done": false, "is_valid": false, "n_faces": 0, "exception": "OCCError: StdFail_NotDone"}
+    },
+    {
+      "model_id": "E6_wedge_thin_r5", "step": "E6_wedge_thin_r5.step",
+      "n_edges": 12, "target_edges_1based": [11], "radius": 5.0,
+      "parasolid_ref": "72.5 offsets/spine limitation on non-orthogonal faces",
+      "failure_mode": "thin wedge ridge NotDone r>=5. TAPER-INSENSITIVE (0.2 vs 0.05 identical) => thickness(4)-dominated overflow, NOT a clean near-tangent",
+      "agent_coverage_gap": "wedge-topology (non-orthogonal) single-edge overflow variant → face_overflow",
+      "verified_fillet": {"is_done": false, "is_valid": false, "n_faces": 0, "exception": "OCCError: StdFail_NotDone"}
+    },
+    {
+      "model_id": "E7_cylboss_endcorner", "step": "E7_cylboss_endcorner.step",
+      "n_edges": 18, "target_edges_1based": [6], "radius": 4.0,
+      "parasolid_ref": "curved end-corner (PerformIntersectionAtEnd territory); Parasolid 77.3.5 overlap_edge / end-cap family",
+      "failure_mode": "FALSE-GREEN at ALL r=2/4/5/5.9: fillet segment terminates ON the cylindrical boss; end-cap construction writes NotClosed/Unorientable/SelfIntersectingWire silently. Defect locality PROVEN: F1/F5 d_end=0.000 (exactly at the free end).",
+      "agent_coverage_gap": "S4 root via false-green (decision-space②: fg_endcap_probe fired). First real S4-root case.",
+      "case_json": "cases/E7-cylboss-endcap-s4.json",
+      "verified_fillet": {"is_done": true, "is_valid": false, "n_faces": 8, "exception": null},
+      "verified_variants": {"edge#7 r4": "false-green too", "edge#8 r4": "NotDone"}
+    },
+    {
+      "model_id": "E8_loft_bspline", "step": "E8_loft_bspline.step",
+      "n_edges": 15, "target_edges_1based": [3], "radius": 3.0,
+      "parasolid_ref": "77.3.1 bsurf_c (B-surface offsets bounded / extension limited)",
+      "failure_mode": "FALSE-GREEN at ALL r=1/3/5: blend along BSplineSurface x Plane edge produces self-intersecting (x2) + Unorientable faces, IsDone=true. Radius-independent.",
+      "agent_coverage_gap": "S2-bsurf root via false-green (fg_support_probe fired). First real B-surface (G4) case.",
+      "case_json": "cases/E8-loft-bsurf-s2.json",
+      "verified_fillet": {"is_done": true, "is_valid": false, "n_faces": 10, "exception": null},
+      "verified_variants": {"edge#13 r3": "false-green too", "edges#7/#10/#15 r3": "valid"}
+    }
+  ]
+}

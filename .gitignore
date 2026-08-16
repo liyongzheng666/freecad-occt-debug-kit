@@ -16,7 +16,9 @@
 *.pyc
 .DS_Store
 
+# Local GitNexus index/notes (private, not part of the repo).
+.gitnexus
+
 # Interview prep materials — private, never pushed to the public repo.
 /INTERVIEW-PREP.md
 /interview-prep/
-

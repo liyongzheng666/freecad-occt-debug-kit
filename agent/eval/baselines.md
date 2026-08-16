@@ -1,0 +1,262 @@
+# 根因 Eval 回归基线（baselines）
+
+> 由 `eval/eval.sh`（→ `eval/runner.py`）产出并手动登记。打分维度见
+> [../docs/root-cause-verification.md](../docs/root-cause-verification.md) §6 + `eval/scorer.py` 文档。
+> 复现：`bash agent/eval/eval.sh`（需 debug FreeCADCmd；缺则相关 case 标 SKIP，不假绿）。
+
+## 规则版 policy（A3 基线）
+
+> 跑于 2026-06-28（原始 6 case）+ **2026-06-30 更新（A7 WP3 s3-fixture，共 7 case）**。real 后端（debug OCCT 7.8.1 + FreeCADCmd）。
+> 分层＝按 GT `failure_class`；clean 自成 `clean/abstain` 层、false-green 归 `其它(无三态类)`。
+> 决策走 `decide(state)` 接缝（policy=rule；A5 换 decide_llm 同表对比）。
+> **定位准确率只在"承诺定位"的 case 上算；弃权 case 定位记 n/a，对错归 abstention（分账不混）。**
+>
+> **2026-06-29 更新（A7 WP1+WP3）**：下表 tool-call/wall 已含 A7 改动——**WP1** S3 候选经 capture 桥真跑 ssi_probe（near-tangent case +1 tool、wedge wall 升到 ~7s 因 LLDB capture）；**WP3** S2 分类后真跑互斥反事实 perturb_tolerance（升序容差阶梯，+≤3 reproduce/case）。**质量维（定位/失效分类/机制*/校准/弃权）逐位不变**——A7 是把第三腿（机制 capture + 反事实互斥）做实，不动定位正确性。
+>
+> **2026-06-30 更新（A7 WP3 s3-fixture）**：新增第 7 个 case `s3-fixture`——合成 fixture S3 case，覆盖 `_ssi_verdict fired` 分支（真实 S3 接触退化现场两轮 7 族未获，fixture 是诚实合成替代）。`investigate()` 加 `ssi_fixture` 路径：跳过 reproduce/playbook/radius_probe，直接跑 `ssi_probe(fixture='near-tangent')` → s3_signature=true → fired → 结论 root=S3。定位/失效分类均 1.00，tool=1（单次 ssi_probe），wall<0.3s。algorithmic_overflow 层由 n=1 升至 n=2，层均定位 0.85。
+>
+> **2026-07-01 更新（A7 WP5 box-r5 真实 S3 env_emit capture）**：`ChFi3d_Builder_0.cxx::StripeEdgeInter` 源码插桩（`DStr` 具名化 + `OCCT_DEBUG_SSI_OUT` 门控落盘两 blend 面），`_ssi_discriminate` 加 `env_emit` 路径 → **box-r5 的 S3 判别从"untestable"（无登记现场）升到"fired"（真实 blend 面，非 fixture）**：`capture_ssi_env('box',5)` 得两同轴 R5 圆柱 → `min_dihedral=0.0° section_edges=0` → `s3_signature=true`。**这不改任何质量维分数**（机制\*仍是 localization_depth 代理、定位仍 0.70——见下逐 case），只把 box-r5 的 tool-call 从 8→**9**（S3 候选真跑 `capture_ssi_env` +1，此前 untestable 不发工具）。故 algorithmic_overflow 层均 tool 4.5→**5.0**、全集 5.71→**5.86**。**box-r5 现是 overlap 型 S3 的真实机制现场**（三腿全实：radius_probe 定 S2 + ssi_probe 证 S3 proximate + 互斥反事实判根=S2），s3-fixture 退居"接触退化型 S3"的合成替补。
+
+| 层 | n | 定位 | 失效分类 | 机制* | 反事实* | 校准 | 平均 tool-call | 平均 wall_s |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| clean/abstain | 1 | n/a | n/a | n/a | n/a | n/a | 2.0 | ~0.3 |
+| algorithmic_overflow | **2** | **0.85** | 1.00 | 0.20 | 携带 | 0.72 | **5.0** | ~1.2 |
+| geometric_curvature | 1 | 1.00 | 1.00 | 0.50 | 携带 | 0.70 | 8.0 | ~1.9 |
+| geometric_near_tangent | 2 | 1.00¹ | 1.00 | 0.50 | 携带 | 0.70 | 9.5 | ~4.8 |
+| 其它(无三态类)·false-green | 1 | 0.40 | n/a | 0.50 | 0.00 | 0.75 | 2.0 | ~0.4 |
+| **全集** | **7** | **0.82** | **1.00** | **0.38** | — | **0.72** | **5.86** | ~2.1 |
+
+¹ near-tangent 层 n=2 但定位均值只算 1 个**承诺**case（`wedge-sliver` 1.00）；另一 `wedge-thin-abstain` 弃权 → 定位 n/a（不入均值），其对错见弃权汇总。
+
+逐 case：`box-r5`/`pocket-blind-hole`/`wedge-sliver` 三态根 S2 全中；**`s3-fixture` fixture S3 全中**（定位 1.00、失效分类 1.00、tool=1）；`box-clean` 良性 → **正确弃权**；`thinplate-false-green` 薄板双面 fillet 自交但 IsDone=True → **抓出 false-green**（不信 IsDone），但只达症状 S3、未回溯 S2 根 → 定位 0.40（**首个触发症状-only 部分分**）；`wedge-thin-abstain` 极薄楔可行半径低于探针下限 → **过度弃权**。
+
+**弃权/校准（集合量）**：correct_abstain=1 / wrong_abstain=1 / correct_commit=5 / **false_commit=0**；**abstention precision = 0.50**（弃权 2 次对 1 次——规则版在极薄楔上探针太粗、过度弃权，A5 可改进）。
+
+读数说明（诚实边界）：
+
+- **失效分类 1.00（三态全覆盖全中）**：免埋点诊断（triage_input 量近切角/凹曲率）精确区分 algorithmic / curvature / near-tangent 三态，与真值一致——A4 的核心可量化结论。
+- **定位分层不均是真实信号，不是噪声**：
+  - `wedge`（近切）/`pocket`（曲率）定位 **1.00**——triage 量出失效现场（近切边 `edge#0` @1.718° = LLDB 真值 1.72°；凹曲率面 `face#6` @r3），免埋点即可**实体级定位**。
+  - `box`（overflow）定位 **0.70**——stage 满分但 entity 0：重叠的两 fillet 带是 S2 **中间面**，免埋点无法命名。其句柄埋在 `ChFi3d_StripeEdgeInter` 的**匿名 `DStr`**（见 `cases/box-r5.json` truth_run + 记忆 fillet-overflow-crash-site），**capture 取不到具名面 → entity 维可能止于 stage 级；0.70 是诚实下限，不保证 A7 能升到 ~1.00**——与 wedge 近切「capture 可命名 HS1/HS2」相反，overflow 的实体定位增量 capture 未必兑得了，别把这格当待兑现的支票。**WP5（2026-07-01）验证了这个预判：**源码插桩把 `DStr` 具名化后，capture **确实取到了两 blend 面**（S3 机制从 untestable→fired），但取出的是通用 `Geom_Surface`（落盘为 `blend1`/`blend2`），**匹配不上 GT 的 `stripe1/2@S2` 命名 token → entity 维仍 0、定位仍 0.70**。即"capture 救得了机制维证据、救不了 entity 维命名"——机制真实性↑与 entity 打分是两码事，0.70 落定为已验证下限（非待兑支票）。
+  - `thinplate`（false-green）定位 **0.40**——**首个症状-only 部分分**：agent 抓出 IsDone=True 但自交（不信 IsDone ✅），但只达症状 S3、未回溯 S2 根（branch-B 不跑 radius_probe）。改进项：false-green 检出后也 radius_probe 回溯 S2 根。
+- **弃权是一等结果，与定位分账**：clean 正确弃权（`box-clean`）、过度弃权（`wedge-thin-abstain`，可行半径 <探针下限 0.002 → 漏掉本可定位的 S2）——两者定位都记 **n/a**（不混入定位均值），对错全归 **abstention precision = 0.50**。这把"会不会幻觉/会不会过度弃权"和"定位准不准"两件事分开量——一个过度自信 LLM 会在 clean 上 false_commit、一个保守 LLM 会到处 wrong_abstain，都被抓。
+- **机制\* / 反事实\***：机制仅 `localization_depth` 深度代理；反事实仅判"是否携带"（false-green 的 branch-B 未携带靶向修法 → 0.00，是诚实的待补点）。真分待 truth-run 中间态 / OCCT 执行（A8）。
+- **A7 WP1（机制腿 capture）做实但未改分**：S3 候选不再永久 untestable——near-tangent 经 capture 桥抓真支撑面跑 ssi_probe 得 `ruled_out`（wedge：1.7184° + section 1 条 contact 边 → 属 S2 非 S3）。这条机制证据进了结论的 evidence，但 scorer 的"机制\*"维仍是 `localization_depth` 代理、不直接打分 capture 结果——故分值不变、tool-call/wall 上升（增量是"证据质量"非"分数"，诚实标注）。
+- **A7 WP3（反事实腿互斥判别 + s3-fixture eval）做实**：两个子任务：① 反事实从"声明修法字符串"升级为**真跑两个互斥修法出判别**——降半径（radius_probe 已 fired）+ 扰容差（perturb_tolerance，不动半径）。三态 S2 case 实测 **扰容差(≤0.1)无效 → 判 [S2]，排除 S3 容差敏感**（wedge/pocket/box 均如此，与真值一致——它们确非 S3 数值病态）；scorer 的"反事实\*"维仍只判"是否携带靶向修法"，真分待 scorer 加"反事实判别 vs GT"维（A8）。② **s3-fixture case 新增**（2026-06-30）：`_ssi_verdict fired` 分支在 eval 路径正式覆盖——两轮 7 族真实 S3 现场未获（WP2 诚实负结果），以合成 near-tangent fixture 替代；investigate() 新增 `ssi_fixture` 路径直接跑 ssi_probe，跳过 reproduce/radius_probe；eval 7 case 全 OK，13 单测全 PASS。
+- **A7 WP5（box-r5 真实 overlap 型 S3，源码插桩 env_emit）做实但未改分**（2026-07-01）：`ChFi3d_Builder_0.cxx::StripeEdgeInter` 把入参 `TopOpeBRepDS_DataStructure& /*DStr*/` 具名化，在 `throw` 前经 `OCCT_DEBUG_SSI_OUT` 门控 `BRepTools::Write` 落盘两 blend 面（纯加法、无环境变量时行为不变）；`_ssi_discriminate` 按 `spec["method"]` 分派 `env_emit`（免 LLDB，`reproduce` 时置环境变量→读回 brep→ssi_probe）。**box-r5 的 S3 判别从"untestable"→"fired"**（真实 blend 面：两同轴 R5 圆柱 0.0° section=0 → s3_signature=true）。与 WP1 同理——机制**证据质量**升（S3 从"没法测"到"真实 fired，非 fixture"），但 scorer 机制\*维仍是 `localization_depth` 代理、定位仍 0.70（entity 命名不受益，见上"box"逐 case），故分值不变、tool-call 8→9。这条把 box-r5 从"S3 只能 fixture 替身"升级为"overlap 型 S3 的真实机制现场"，三腿全实。
+- **校准 0.70~0.75**：置信与 stage 定位正确性之差。
+
+> GT 基线说明：`box-r5`/`wedge-sliver` 是 LLDB 埋点真值；`pocket-blind-hole` 是**几何第一性真值**（r>凹曲率半径 ⟹ 滚球无解，几何必然，不依赖算法实现）+ radius_probe 边界证据（可行/不可行界恰落在曲率半径 3 上）+ triage 独立佐证 face#6 r3——honest 区分两类 GT 来源。
+>
+> **区分度（为 A5 A/B 铺路）**：纯 S2-fired case 单看 rule-vs-LLM 会双双顶天花板，证明不了 policy 好坏。已补 3 个能拉开区分度的 case：① `box-clean`（**clean 弃权**）测不幻觉——过度自信 LLM 会 false_commit。② `thinplate-false-green`（**false-green / 代理奖励陷阱**）测铁律——信 IsDone 的 policy 漏检，且触发症状-only 部分分（0.40）。③ `wedge-thin-abstain`（**loop 内过度弃权**）——可行半径低于探针下限，规则版 wrong_abstain，abstention precision 因此从 1.00 掉到 0.50（真实弱点，A5 可用自适应探针改进）。⏳ 仍缺：S0→S3 链（触发因果链部分得分，待 A7 capture 才能离线立真值）。
+
+\* 机制=深度代理、反事实=仅判携带；真分待 truth-run 中间态 / OCCT 执行接入（A8）。
+
+## LLM 版 policy（A5）
+
+> 跑于 2026-06-28，`decide_llm` claude_cli 后端（本地 `claude -p`，`claude-opus-4-8`，复用 Claude Code 鉴权）。
+> 决策已录制 `eval/llm_decisions/`（4 条唯一决策）；replay 后端离线确定复现本表、零计费、可进 CI。
+> 同一 case 集、同一组确定性工具、同一 `decide(state)` 接缝——**只换决策臂**。
+
+| 层 | n | 定位 | 失效分类 | 机制* | 反事实* | 校准 | 平均 tool-call | 平均 wall_s |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| clean/abstain | 1 | n/a | n/a | n/a | n/a | n/a | 2.0 | (branch B，不进 decide) |
+| algorithmic_overflow | 1 | 0.70 | 1.00 | 0.20 | 携带 | 0.70 | 8.0 | ~1.8（replay） |
+| geometric_curvature | 1 | 1.00 | 1.00 | 0.50 | 携带 | 0.70 | 8.0 | ~1.8（replay） |
+| geometric_near_tangent | 2 | 1.00 | 1.00 | 0.50 | 携带 | 0.70 | 9.0 | ~2.3（replay） |
+| 其它(无三态类)·false-green | 1 | 0.40 | n/a | 0.50 | 0.00 | 0.75 | 2.0 | (branch B，不进 decide) |
+| **全集** | **6** | **0.78** | **1.00** | **0.42** | — | **0.71** | **6.3** | ~1.5（replay；real 含决策延迟 ~26） |
+
+> 上表 tool-call/wall 为 2026-06-29 replay 重跑（含 A7 WP1+WP3）。WP1/WP3 的 capture/perturb_tolerance 是**决策之后的确定性合成**（不在 decide 接缝），录制决策不变 → replay 照常复现。
+
+弃权/校准：correct_abstain=1 / wrong_abstain=1 / correct_commit=4 / false_commit=0；abstention precision=0.50。
+
+### A/B 结论（rule vs LLM）
+
+| 维度 | rule | LLM | 差 |
+| --- | --- | --- | --- |
+| 定位（全集） | 0.78 | 0.78 | **0** |
+| 失效分类 | 1.00 | 1.00 | 0 |
+| abstention precision | 0.50 | 0.50 | 0 |
+| false_commit | 0 | 0 | 0 |
+| 平均 tool-call | 6.50 | 6.33 | **≈0**（±0.17＝near-tangent S3 capture 路径的条件 ToolResult，决策后合成，非决策层差） |
+| 平均 wall_s | 2.4 | ~26（real）/ 1.5（replay） | LLM 决策延迟 ~17× |
+
+> tool-call 数 2026-06-29 含 A7 WP1+WP3（4.83→~6.4）；两臂仍≈持平——A7 的增量是确定性合成（capture 机制证据 + perturb_tolerance 互斥反事实），不在决策臂，故 rule/LLM 同样上升、A/B 结论不变。
+
+**LLM 各质量维 + tool-call 与规则版逐位持平,只慢在决策延迟。** 诚实解读:
+
+- ✅ **印证"模型只在决策点、其余确定性"**:把决策臂从 rule 换成 LLM,正确性一字不变——质量由确定性工具 + 确定性结论合成扛住,LLM 只动"跑哪个判别器/何时收"。换 policy 不破坏任何东西,这正是分层的意义。
+- LLM **独立**跑了 S0/S2/S3 全候选(录制决策含 run S0 / run S2 / run S3 / conclude),与 rule 同序穷尽 → 同 tool-call、同结论。**没找到效率增量**:3 候选决策表小、结论合成 order-independent,"跑全候选"已是最优,没有可省的判别器。
+- **wedge-thin 的 wrong_abstain 两版都没救**:它是**探针分辨率极限**(可行半径 <0.002 探针下限),不是决策-policy 能解的——任何 policy 面对的都是"候选全 ruled_out"。要救得换更细的探针/领域推理工具,不是换决策臂。这是个精确的归因:**A/B 平手不代表 LLM 没用,而是这批 case 的剩余差距在工具层不在决策层。**
+
+> 复现:`bash agent/eval/eval.sh`（rule）；`AGENT_DECIDE_BACKEND=replay AGENT_DECIDE_RECORD=agent/eval/llm_decisions bash agent/eval/eval.sh --policy llm`（LLM，离线零计费）。重录真决策:去掉 `AGENT_DECIDE_BACKEND=replay`（走 claude_cli，需 Claude Code 鉴权）。
+>
+> 难度分层将随 case 扩充加维（凹/凸 × 单边/链/顶点 × 定/变半径，G21）。当前按 failure_class + clean + 其它分层。
+
+---
+
+## 2026-07-02 更新：Parasolid 对照第一轮（P0.1/P1.1/P1.2/P2.1，11 case + 失效四态）
+
+> 变更：① **+4 真实 STEP case**（`E2-thinbar-overlap`/`E3-thinplate-face-overflow`/`E5-boss-face-overflow`/`E4-groove-false-green`，资产 `cases/models/`，Parasolid Blending 卷例子逐一隔离实跑验证）；② **失效三态 → 四态**：新增 `face_overflow`（单边单带溢出，`_classify_s2_failure` 按 blend 边数二分——修掉"单边 case 谎称两相邻带重叠"的假机制）；③ runner 接 `agent_run.edges`（原漏传）；④ reproduce 信号退出归 `kernel_crash`（不动 eval 数字）。来源与执行细节见 `../../docs/fillet-para-study-and-agent-gap-plan.md` §5。
+
+### rule 臂（11 case）
+
+| 层 | n | 定位 | 失效分类 | 机制* | 反事实* | 校准 | 平均 tool-call | 平均 wall_s |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| clean/abstain | 1 | n/a | n/a | n/a | n/a | n/a | 2.0 | ~0.3 |
+| algorithmic_overflow | **3** | **0.90** | 1.00 | 0.20 | 携带 | 0.72 | 6.0 | ~1.4 |
+| **face_overflow（新层）** | **2** | **1.00** | **1.00** | 0.20 | 携带 | 0.70 | 8.0 | ~1.8 |
+| geometric_curvature | 1 | 1.00 | 1.00 | 0.50 | 携带 | 0.70 | 8.0 | ~1.8 |
+| geometric_near_tangent | 2 | 1.00¹ | 1.00 | 0.50 | 携带 | 0.70 | 9.5 | ~4.7 |
+| 其它(无三态类)·false-green | **2** | **0.70²** | n/a | 0.35 | 0.00 | 0.70 | 2.0 | ~0.3 |
+| **全集** | **11** | **0.90** | **1.00** | 0.30 | — | **0.71** | 6.09 | ~1.8 |
+
+¹ 同前：均值只算承诺 case（wedge-sliver 1.00），wedge-thin-abstain 弃权分账。
+² false-green 层现 n=2：**真实模型 `E4-groove-false-green` 1.00**（凹槽 r=15，IsDone=true 但 BRepCheck 1 invalid_subshape → 根 S6 全中，无需 BOP）+ 合成 `thinplate-false-green` 0.40（症状-only，未回溯 S2 根，已知未解）。
+
+**弃权/校准（集合量）**：correct_abstain=1 / wrong_abstain=1 / correct_commit=9 / **false_commit=0**；abstention precision=0.50（同前，wedge-thin 探针分辨率极限未动）。
+
+**回归核对**：原 7 case 各维逐位不变（box-r5 定位 0.70、s3-fixture 1.00、thinplate 0.40 …）——新增 case 纯增量，无既有 case 漂移。
+
+### LLM replay 臂（11 case，零重录）
+
+**质量维与 rule 逐位持平**（定位 0.90 / 失效分类 1.00 / abstention 0.50 / false_commit 0）。关键发现：**决策录制按 state 签名（playbook 节点+已跑候选裁定）键控、非按 case**——新 4 case 走相同决策轨迹（同节点、同候选序）直接命中已录签名，**零重录零计费跑通**。差异仅 wall_s（新 STEP case 读盘+冷启动略慢）与个别 tool-call ±1（capture 条件路径，决策后合成，非决策层差）。
+
+> 复现：`bash agent/eval/eval.sh`（rule）；`AGENT_DECIDE_BACKEND=replay AGENT_DECIDE_RECORD=$PWD/agent/eval/llm_decisions bash agent/eval/eval.sh --policy llm`（LLM 离线；首跑冷启动可 >2min）。
+
+---
+
+## 2026-07-02② 更新：路径 A 免埋点广度收尾（P1.3 + P2.2）
+
+> 变更：① **P1.3** triage 四字段落地（convexity 角占率探针 / short_edges / sliver_faces / tolerance_outliers）——**只报告不进判别**，判别量（min_dihedral/curv）逐位不变；② **P2.2** playbook 加 **S4 顶点候选**（`vertex_probe`，Parasolid vertex_c 构型判据）→ 每个 playbook 路径 case **tool-call +1**（S4 判别真跑，box 全边/邻边构型均 ruled_out）。
+
+### 质量维回归（11 case，rule 臂）
+
+**全部质量维与 2026-07-02① 逐位一致**：定位全集 0.90 / 失效分类 1.00 / abstention 0.50 / false_commit 0 / box-r5 0.70。唯一漂移是登记过的 tool-call：全集均值 6.09→**6.64**（playbook 路径 +1：E2/E3/E5/pocket 8→9、box-r5 9→10、wedge-sliver 10→11；wedge-thin 仍 9——triage harness 无 `wedge-thin` builder → vertex_probe 诚实 untestable 不发工具，预先存在的 builder 不对称，非回归）。
+
+### S4 现场狩猎——诚实负结果（P2.2 Step3）
+
+**8 族简单解析构型未获 S4-proximate NotDone**：box 邻边对（3 种共享面变体；r<10 全成，r≥10 死于 **S2 `StartSol` Builder_2.cxx:944**——LLDB 实测，非 corner）、cube 邻边对（≤9.5 全成）、**金字塔 apex 2-of-4（邻/对——Parasolid §77.2.1 明文禁止的 vertex_c 构型，OCCT 全部收敛！）**、L 型凹凸混合 two-corner、薄板短第三边 corner、凹 notch 2-of-3 凹边（全成）。WP2 记录的 `PerformOneCorner Builder_C1:999` anchor 未复现（确切几何失传）。**不造假 GT case**；S4 eval 层留空待真实构型。正向能力发现：OCCT 顶点收敛比 Parasolid 声明的约束更能打。详见 `loop/test_investigate_vertex.py` 文档。
+
+### LLM replay 臂语义漂移（诚实标注，待重录）
+
+playbook 节点加 S4 候选后，llm replay 忠实重放**旧轨迹**：录制的 conclude 决策在 3 候选后触发（state 签名按已跑裁定匹配、命中旧录制）→ **llm replay 臂不跑 S4 判别**（box-r5 llm tool=8 vs rule 10），质量维仍逐位一致（S4 本会 ruled_out，不影响结论）。**重录**（`claude_cli`，有计费）可消除该语义差；在重录前 A/B 的 tool-call 维不可比，质量维可比。→ **✅ 已于 2026-07-03 全量重录**（见 2026-07-02③ 决策空间账本的三臂对照表），该语义差已消除。
+
+> 复现：`bash agent/eval/eval.sh`；测试 `python -m agent.loop.test_investigate_vertex`（含纯函数 + box 回归断言）。
+
+---
+
+## 2026-07-02③ 更新：曲面猎场 + 假绿决策空间②（13 case，定位 0.92）
+
+> 变更：曲面几何族狩猎（torus/cylcross/loft/cylboss/cylnotch）产出两个**半径无关稳定假绿**真实 case；假绿分支从**零决策硬启发式**（self-int→S3 否则 S6）升级为 playbook 签名② `fillet-falsegreen-invalid` 三候选判别（与 NotDone 签名共用 `decide(state)` 接缝——**决策空间：签名 ×2、假绿分支 0→3 候选**）。判别量 `falsegreen_probe`（一次 FreeCADCmd）：支撑面类型 + 缺陷端局部性 + 自由端。
+
+### 新增 case（首个 S4 根因 + 首个 B-surface/G4 case）
+
+| case | 几何 | GT 链 | 判别 | 定位 |
+| --- | --- | --- | --- | --- |
+| **E7-cylboss-endcap-s4** | box+圆柱 boss 骑跨顶边，fillet 自由端终止在 boss 曲面 | **[S4,S6]** | fg_endcap fired（缺陷 F1/F5 **d_end=0.000**，r=2~5.9 全假绿=半径无关） | **1.00** |
+| **E8-loft-bsurf-s2** | 方转圆 loft，fillet BSpline×Plane 顶圆边 | **[S2,S6]** | fg_support fired（BSplineSurface 支撑；r=1/3/5 全假绿） | **1.00** |
+
+### 回归核对（13 case，rule 臂）
+
+全集定位 0.90→**0.92**（新 case 纯增量）；失效分类 1.00 / false_commit 0 / abstention 0.50 不变。旧 case 质量维逐位不变——**关键回归设计**：① thinplate（全边 blend 无自由端 → S4 候选 ruled_out；中段自交 → S3 fired，root/conf/depth 与旧一致）；② E4（支撑解析 + F11 d_end=14.0 远端 + 无自交 → 全候选 ruled_out → 兜底=原启发式逐字段一致，root S6）。登记漂移：假绿路径 tool 2→**3**（+falsegreen_probe 一次）；thinplate 反事实\* 0.00→**n/a** 是**按设计的改进**（新路径携带对症修法 → 该维诚实不打分，此前缺失被罚 0；scorer 语义 `None if carried else MISS`）。
+
+### 决策空间账本（A5 残留的正面回应）
+
+此前：1 签名 4 候选、rule 顺序穷尽近最优 → LLM 臂无从显价值。现在：**2 签名 7 候选、两条判别通路**（NotDone：S0/S2/S3/S4；假绿：S2/S3/S4）。
+
+**✅ 已重录（2026-07-03，claude_cli 全量 13 case）**，并得到**决策空间的首个正收益证据**：
+
+| 臂 | 定位(全集) | 失效分类 | false_commit | 平均 tool | 平均 wall_s |
+| --- | --- | --- | --- | --- | --- |
+| rule | 0.92 | 1.00 | 0 | **6.23** | ~2.0 |
+| llm（claude_cli 真跑） | 0.92 | 1.00 | 0 | **5.85** | ~36.5（决策延迟） |
+| llm（replay，零计费） | 0.92 | 1.00 | 0 | **5.85** | ~1.9 |
+
+**LLM 臂首次做出与 rule 不同的真实决策——语义正确的早停**：S2 fired 后更 proximate 的判别（S3/S4）无论结果都不改根（root=最 distal fired），LLM 按 system prompt 语义提前收（E2/E3/E5/pocket tool 9→8、wedge-sliver 11→10），**质量维零损失、成本 -6%**；box-r5（S3 有真实机制证据可采）则跑满与 rule 同。replay 臂与 real 臂**每格逐位一致**（13/13 OK 零 SKIP）——record/replay 纪律在 2 签名 7 候选下依然成立。
+
+> 复现：`bash agent/eval/eval.sh`；`python -m agent.loop.test_investigate_falsegreen`（21 断言：纯裁定 + 四锚点端到端 + 回归量）。
+
+---
+
+## 2026-07-03② 更新：反事实维从"仅判携带"升为真分（C1）
+
+> 变更：投产**离线基线回归门**（C2 Phase 2：`eval/snapshot.py` 冻结 Conclusion + `eval/test_baseline.py` 纯离线重打分断言，进 CI）后，兑现剖析 C1——`scorer` 的**反事实维**不再"仅判是否携带 prose"，而是拿 investigate 真跑的互斥反事实**结构化判别** `counterfactual_verdict`（降半径×扰容差 → S2/S3/S2->S3/inconclusive，[investigate.py](../loop/investigate.py) `_counterfactual_verdict`）**vs GT 根**打真分：verdict 缺失/inconclusive → None（不冒充 0）；claimed 根==GT.root → 1.0；命中症状 → 0.4；无交 → 0.0。
+
+**效果（rule 臂 13 case，仅反事实维变、其余维逐位不动、弃权汇总不变）**：
+
+| 层 | 反事实（旧：仅携带） | 反事实（新：真分 vs GT） |
+| --- | --- | --- |
+| algorithmic_overflow / face_overflow / geometric_curvature / geometric_near_tangent | 携带→None | **1.0**（8 个 S2-NotDone 案例 verdict=S2==GT 根） |
+| 其它(无三态类)·false-green | 0.0 | None（假绿/fixture 未跑互斥反事实腿 → 诚实不打分） |
+| **全集** | **0.0** | **1.0** |
+
+即"5 维里 2 维假分"补掉第一维（机制维真分仍待 A8 truth-run 中间态）。基线门实测：只改 scorer 未重生成快照 → `test_baseline` 变红（精确指出 counterfactual 层漂移）→ 重跑 `python -m agent.eval.snapshot` 更新快照 → 复审 diff 确认仅该维动 → 绿。
+
+> 复现：`python -m agent.eval.test_scorer`（含 6 条反事实真分断言）+ `python -m agent.eval.test_baseline`（离线门）。
+
+---
+
+## 2026-07-04 更新：规模化 eval —— 13-case 串行 → 115-case 并行 suite（P0）
+
+> 变更：把手工 13-case 串行 eval 升成"小但 production-shaped"的**并行 + per-case 沙箱/预算 + 失败隔离**套件。核心是一个**参数化 case 生成器**（[gen_cases.py](gen_cases.py)）+ [runner.py](runner.py) 的 `ProcessPoolExecutor` 并行层。**默认 `--suite cases`（13 手工真值）仍走串行、逐位不变**（baseline 门不漂移，见下"回归"）；规模化经 `--suite parametric --workers N` 显式开启。
+
+**参数化族（GT 全部几何第一性，不造假）**：`box_false_green`(40：`rf>minEdge/2` → is_done=True 但自交无效 selfX=8，是 thinplate-false-green 的规模化推广)、`geometric_curvature`(24：`rf>RC`)、`geometric_near_tangent`(25：二面角 θ<10°，半径无关)、`clean`(26：`rf`远小于临界 → 应正确弃权)。每族参数区间都留余量、避开跨平台临界带；每 case 标 `synthetic:True` + `gt_basis:parametric_first_principles` + `family`，与 13 手工 case **分开报**。
+
+**分层读数（rule 臂 115 case，12 workers）**：
+
+| 层 | n | 定位 | 失效分类 | 机制* | 反事实* | 校准 | tool | 弃权 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| geometric_curvature | 24 | 1.00 | 1.00 | 0.50 | 1.00 | 0.70 | 9.25 | ✓结论 |
+| geometric_near_tangent | 25 | 1.00 | 1.00 | 0.50 | 1.00 | 0.70 | 10.24 | ✓结论 |
+| box_false_green | 40 | **0.40** | n/a | 0.50 | n/a | 0.75 | 3.00 | ✓结论 |
+| clean/abstain | 26 | n/a | n/a | n/a | n/a | n/a | 2.00 | ✓弃权 |
+| **全集** | **115** | 0.73 | 1.00 | 0.50 | 1.00 | 0.72 | 5.65 | — |
+
+abstention precision **1.00** / false_commit **0**（26 个 clean 无一幻觉根因）。
+
+**规模化读数**：`wall_total=21.2s vs Σper-case=229s → 加速比 10.78×`（亚线性）；`TIMEOUT=0 ERROR=0 SKIP=0`。per-case 预算：wall（SIGALRM 软背板）+ 每次 FreeCADCmd `REPRO_TIMEOUT_S`（硬）+ 可选 `RLIMIT_AS`。
+
+**诚实边界（关键，别把规模套件当 13-case 的替代）**：
+- 本套件测**失效分类 + stage 级定位 + 吞吐**；**不**测实体级定位（`entities=[]` → entity 维 None）——实体精度是 13 手工 case 的活（那里有 LLDB/几何真值支持具名 token）。
+- `box_false_green` 定位封顶 **0.40** 是**按设计的诚实下限**：免埋点只抓得到 S3 自交这个**症状**，抓不到"半径过大致带重叠"的 S2 **距端根**（root=S2 距端 / S3 症状，与 thinplate 一致）。这不是缺陷，是免埋点假绿定位深度的真实测量。
+- 机制维仍是深度代理（`*`，待 P1b 真分）；反事实维在 S2-NotDone 族已真分（=1.0），假绿族不跑互斥反事实腿 → n/a（诚实不打分）。
+
+**对抗式复审（16-agent workflow）自查出 3 个诚实性缺陷、已修**（铁律：会撒谎的 eval 比没有更糟）：
+- **wall 预算被吞→假 OK**（低，铁律）：一发 SIGALRM 若被 investigate 的 `except Exception` 吞掉，超预算 case 会以 status=OK 蒙混。修：`_on_alarm` 置 `fired` 位，run_case 返回后若 fired 则强制改判 **TIMEOUT**（不假绿）。
+- **隔离过度宣称**（中）：FreeCADCmd **subprocess** 崩溃确被隔离，但 **worker 进程级**死亡（`--mem-mb` 的 RLIMIT_AS OOM / native 崩溃穿回 worker）会毒化整池、把健康兄弟一并误判 ERROR。修：① 文档收紧到"subprocess 级绝对隔离、进程级由重跑兜"；② `_run_parallel` 在 `BrokenProcessPool` 时把 pending **重跑隔离**（逐个单池）→ 只有真凶落 ERROR、兄弟恢复（`test_runner_scale` 用 env 故障注入 SIGKILL 实证）。
+- **文档角度带写错**（低）：gen_cases 近切带 `θ∈[0.4°,4.3°]` 与实际网格 `{0.5,1,2,3,4}°` 不符，已改齐。
+
+**回归**：`--suite cases` 串行路径逐位不变——全集 **定位 0.92 / 失效分类 1.00 / tool 6.23 / false_commit 0** 与改造前一致；21 个离线测试全绿（含 `test_baseline` 门 + 新 `test_gen_cases` / `test_runner_scale`）。
+
+> 复现：`python -m agent.eval.runner --suite parametric`（115 case 并行 + 分层 + 规模化读数）；`python -m agent.eval.gen_cases`（族清单/计数）；`python -m agent.eval.test_gen_cases`（第一性不变量）+ `python -m agent.eval.test_runner_scale`（并行/沙箱/预算/隔离，含 SIGKILL 隔离实证）。
+
+---
+
+## 2026-07-04② 更新：机制维升为真分（P1b-C2）+ 全工具层离线重放地基（P1b-C1）
+
+### C2 —— 机制维从深度代理 → 真分（补掉"5 维 2 假分"剩下那一维）
+
+此前机制维是 `_MECH_DEPTH_PROXY[localization_depth]`（0.2/0.5/1.0），**只代理"定位站到多深"、从不看机制对错**。现在：给 `CausalHypothesis` 加 `mechanism_signature`（investigate 在 S3 ssi fired → `s3_degenerate_contact` / S2 几何族 → `s2_rolling_ball_infeasible`，纯读已跑裁定、不改决策），给 4 个 case 加 `mechanism_truth`（**誊自已冻的 truth_run/capture_result，零新埋点**），scorer `_mechanism` 拿**预测签名 vs 真值签名**打真分：匹配 1.0 / 不匹配 0.0（错机制是真 miss）/ 无真值·未声明·上游 throw → **None（不冒充）**。
+
+| case | mechanism_truth 出处 | 预测签名 | 真分 |
+| --- | --- | --- | --- |
+| box-r5 | env_emit 真抓两 blend 面（n_section_edges=0） | s3_degenerate_contact | **1.0** |
+| s3-fixture | 合成 fixture（诚实标注） | s3_degenerate_contact | **1.0** |
+| wedge-sliver | LLDB 抓 HS1/HS2（dihedral 1.72, section=1） | s2_rolling_ball_infeasible | **1.0** |
+| pocket-blind-hole | triage 凹曲率 3.0 + radius 阶梯边界 | s2_rolling_ball_infeasible | **1.0** |
+
+**诚实边界**：真分只覆盖有 `mechanism_truth` 的 **4/13** case，其余 None **不计入**均值（runner 脚注印子集数 N、报表标 `机制†`，别读成"全体机制满分"）。**刻意不设 observable 容差带**（避免"容差带当洗白"）——observable 只作真值出处依据、供人复核。A-phase-2（OCCT `OCCT_DEBUG_S3_STATE` 埋点抓原始交线条数/StartSol 残差）仍是**时间盒化的计划**、非本轮兑现。基线门实测：加 `_mechanism` → snapshot 机制列漂移 → `test_baseline` 变红（精确指出 mechanism 层）→ 重跑 `snapshot` → 复审 diff（仅机制维动、全集 定位 0.918/失效分类 1.0/false_commit 0 不变）→ 绿。
+
+### C1 —— 全工具层 record/replay 地基（真离线 eval 的第一块）
+
+此前只有 reproduce 有 real|replay、且基线门只冻 Conclusion（不重放工具层）。本轮：
+- 抽出共享 `agent/tools/_fixtures.py`（键设计 + `FixtureNotRecorded` + `REPRO_BACKEND`/`REPRO_RECORD_DIR` eval-wide 开关）。
+- **修掉 reproduce fixture-key 撞键 bug**（旧键漏 tolerance/edges → `_probe_tolerance_fix` 同半径扰 tol 会覆盖同一文件、静默错值）；replay-miss 从 `FileNotFoundError`（被 runner 当 SKIP 吞）改抛 `FixtureNotRecorded` → **runner 归 ERROR 非 SKIP**（漏录不静默，堵幸存者偏差）。
+- 给 `check_valid` 上 real|replay（按 **brep 内容哈希**寻址——brep 落 per-run tmp、路径不稳、内容才稳）。
+- runner 加 `--record-dir` / `--backend`（一遍 real 录、一遍 replay 离线）。
+
+**已证（`test_offline_replay`）**：clean case（诊断只用 reproduce+check_valid）record→replay **字节级一致**，且 replay 时把 FreeCADCmd/occ-debug-mesh 指向**不存在路径仍产出同一 Conclusion** → 铁证真离线、非"碰巧二进制在"。**诚实剩余增量**（模式已就位、地基已验）：缺陷 case 的全离线还需 triage/vertex/ssi/falsegreen 也上双后端 + brep 路径跨机相对化 + CI 加 `--backend replay` 步。这是下一个增量，不是本轮空头支票。
+
+> 复现：`python -m agent.eval.test_mechanism_score`（机制真分 1.0/0.0/None 分档）+ `python -m agent.eval.test_offline_replay`（record→replay 字节一致 + 离线实证）。
