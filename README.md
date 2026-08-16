@@ -1,25 +1,52 @@
-# FreeCAD + OCCT 本地开发工作区
+# freecad-occt-debug-kit —— OCCT/FreeCAD 圆角失败根因诊断 Agent 与调试工具链
 
-这个外层目录是开发的**编排层**：在本地克隆、构建并调试 FreeCAD + OCCT，再把调试器捕获到的几何转成供 **Print** viewer 使用的几何调试资产。它管理**三个**各自独立的源码仓库，这三个都不随本 kit 提交：
+> **What this is**: a root-cause investigation agent + quantified eval harness for OCCT/FreeCAD fillet & chamfer failures, built on a reproducible debug environment (pinned forks, Pixi toolchain, LLDB capture, geometry viewer). Two audiences, two doors.
+> **这是什么**：面向 OCCT/FreeCAD 圆角（fillet/chamfer）失败的**根因调研 agent + 量化 eval**——可复现调试环境、确定性工具层、决策回路、五维打分与弃权计量。
 
-```text
-freecad/                  工作区配置、脚本与文档（本仓库）
-├── FreeCAD/              FreeCAD 源码 + Pixi/Ninja debug 构建          （克隆并钉死；不在本仓库）
-├── occt/                 OCCT 源码 + Makefiles debug 构建 + install     （克隆并钉死；不在本仓库）
-├── tools/
-│   ├── occ-debug-mesh/   C++ BREP → print-mesh/geom/defect 转换器       （在本仓库内）
-│   └── Print/            Print viewer + bridge + protocol schema        （克隆并钉死；不在本仓库）
-├── scripts/              配置 / 构建 / 运行 / 调试 / 捕获 / 预览 的入口
-├── templates/            属于被忽略源码树内、需还原的文件（如本地 CMake preset）
-├── patches/              克隆源码树后需重新应用的本地源码改动
-├── docs/                 工作区专属文档
-├── .vscode/              两个源码树共用的唯一 VS Code 配置
-└── .occ-debug/           调试会话输出：events.ndjson + assets           （生成物；不在本仓库）
+## 你是哪种读者？（Two doors）
+
+| 身份 | 入口 | 3 秒预览 |
+| --- | --- | --- |
+| 🧱 几何建模 / 内核开发者 | [GEOMETRY.md](GEOMETRY.md) | 失效本体 S0–S6、失效四态、Parasolid 对照、缺陷导出、LLDB 捕获 |
+| 🤖 Agent / Harness / Eval 工程师 | [AGENT.md](AGENT.md) | 决策回路、decide 接缝 A/B、五维打分、弃权四态、轨迹/review 闭环 |
+| 🛠 想在本仓库构建 / 开发 | 往下读「环境编排」 | [docs/dependencies.md](docs/dependencies.md) 是依赖唯一权威源 |
+
+## 30 秒上手（Quick start）
+
+```bash
+python -m agent.loop.investigate box 5                           # 合成 case 根因诊断
+python -m agent.loop.investigate "brep:/abs/m.brep" 5 --edges 3  # 你的模型：根阶段 + 失效类别 + 修法 + 证据
+bash agent/eval/eval.sh                                          # 五维 + 弃权四态分层打分
 ```
 
-本外层 Git 仓库刻意忽略 `FreeCAD/`、`occt/`、`tools/Print/`（三者各有自己的分支 / diff / 远端历史），以及 `.occ-debug/`、`.omx/`、`myFold/`（生成数据与本地状态）。
+> **维护范围（Scope）**：runtime 仅支持与维护 **macOS Apple Silicon**。Linux 仅用于 CI 离线单测门（无 OCCT，干净 SKIP），不承诺可运行；其它平台不维护。提问题请带复现包（[.github/ISSUE_TEMPLATE.md](.github/ISSUE_TEMPLATE.md)）。
 
-也就是说，**本仓库的全新 clone 只包含配置层加上 `occ-debug-mesh` 工具**，不含 FreeCAD、OCCT 或 Print 源码。按[从全新克隆引导环境](#从全新克隆引导环境)把它变成可构建、可调试的环境。本 kit 如何喂给 Print viewer，见[架构与 Print 依赖](#架构与-print-依赖)。
+## 快速复现清单（Issue triage）
+
+遇到问题按三层定位，10 分钟内锁定层：
+
+```bash
+bash scripts/workspace-doctor.sh          # ① 环境/布局/插桩/dylib 是否健康
+bash scripts/run-agent-tests.sh           # ② 24 测试模块（哪层真失败、哪层 SKIP）
+bash agent/eval/eval.sh --case box-r5     # ③ 单 case 复现（再换成出问题的 case）
+```
+
+分数基线冻结在 [agent/eval/baselines.md](agent/eval/baselines.md)，漂移即回归；依赖关系查 [docs/dependencies.md](docs/dependencies.md)。
+
+## 仓库布局
+
+```text
+freecad-occt-debug-kit/
+├── agent/                 诊断 agent：回路（loop/）+ 工具层（tools/）+ eval/（五维打分）
+├── tools/occ-debug-mesh/  C++ BREP → mesh/geom/defect 转换器（本仓库内）
+├── scripts/               构建 / 运行 / 调试 / 捕获 / 自检入口
+├── docs/                  设计文档（按读者分轨，见 docs/README.md）
+├── GEOMETRY.md / AGENT.md 两条读者轨道入口
+├── FreeCAD/ · occt/ · tools/Print/   三个钉死 fork（bootstrap 克隆，不入本仓库）
+└── .occ-debug/            调试会话输出（生成物，不入库）
+```
+
+> 三个 fork 各有自己的 git 历史/分支/远端，不随本仓库提交；全新 clone 只含配置层 + `occ-debug-mesh` + agent，按下面「环境编排」变成可构建、可调试的环境。本 kit 如何喂给 Print viewer，见[架构与 Print 依赖](#架构与-print-依赖)。
 
 ## 项目现状总览
 
@@ -44,7 +71,9 @@ freecad/                  工作区配置、脚本与文档（本仓库）
 
 > 完整路线图、gap register（G1–G30）与逐项进展见 [agent/README.md](agent/README.md)；本次加固每项都经 CI 两版 Python 绿灯 + 基线门零漂移把关后合并。
 
-## 从全新克隆引导环境
+## 环境编排：从全新克隆引导环境（在本仓库构建/开发的人）
+
+> 本节面向**需要在本仓库构建/开发**的人；只读系统/Agent 的读者走上面两条轨道。
 
 本 kit 的 clone 只含配置层。一条命令把它变成可构建、可调试的环境：
 
@@ -125,7 +154,7 @@ VS Code 暴露了等价的 configure / build 任务。常规的 CodeLLDB launch 
 
 本仓库（kit）是**生产 / 编排端**：克隆并构建本地可调试的 FreeCAD + OCCT，在断点处捕获几何，并把捕获到的 BREP 转成可视化资产。**Print** 是**消费 / Viewer 端**，是一个独立仓库，由 `scripts/bootstrap.sh` 克隆并钉死到固定 commit：
 
-- **来源**：`https://github.com/liyongzheng666/Print.git`，钉在 `PRINT_SHA = b69d0d19f9c756f756cf7805795b7f3c8c5e7180`（见 `scripts/bootstrap.sh`）。
+- **来源**：`https://github.com/liyongzheng666/Print.git`，钉在 `PRINT_SHA = 98657e48aff2b0410a45f85540ee40e77dcc5ca4`（**以 `scripts/bootstrap.sh` 为准**，见 [docs/dependencies.md](docs/dependencies.md) 版本钉板表）。
 - **落点**：`tools/Print/`，被本仓库 `.gitignore` 忽略——它有自己的 git 历史 / 分支 / 远端，不随本仓库提交。
 - **提供三样东西**：
   - `tools/Print/protocol/` — **硬契约 JSON Schema**：`print-mesh.schema.json`（逐面网格）、`geom.schema.json`（几何 / 拓扑 sidecar）、`event.schema.json`（事件 / 缺陷）。
@@ -205,11 +234,13 @@ tools/Print/bridge/bridge.py --session .occ-debug/sessions/dev --port 7341
 
 ## 文档
 
-- [tools/occ-debug-mesh/README.md](tools/occ-debug-mesh/README.md) —— `occ-debug-mesh` 的设计说明 / 交接文档（夹具、输出格式、决策表）。
-- [docs/print-linkage-tech-decisions.md](docs/print-linkage-tech-decisions.md) —— Print ↔ kit 联动的技术选型与硬契约（Session 握手、SSE、print-mesh 格式）。
-- [docs/occ-fillet-debug-agent-architecture.md](docs/occ-fillet-debug-agent-architecture.md) —— 增量式 FreeCAD/OCCT 圆角（fillet）调试 agent 与几何 viewer 的架构与实现计划。
-- [docs/lldb-dynamic-geometry-capture.md](docs/lldb-dynamic-geometry-capture.md) —— 以调试器为先的几何捕获命令：无需为每次观察重新构建，即可发出点、曲线、拓扑与 BREP 资产。
-- [docs/vscode-send-to-print.md](docs/vscode-send-to-print.md) —— 首版 VS Code Variables/Watch 右键工作流，经 CodeLLDB 与共享的 Capture 流水线把选中的几何送往 Print。
-- [docs/vscode-build-and-pixi.md](docs/vscode-build-and-pixi.md) —— VS Code 构建 / 链接流水线与 Pixi 如何配合（面向新手的 Pixi 与 CMake 入门）。
-- [docs/occt-debugging.md](docs/occt-debugging.md) —— 调试工作流与排查指南。
-- [docs/vscode-debug-breakpoints.md](docs/vscode-debug-breakpoints.md) —— 断点设置与技巧。
+按身份选轨道；全量索引在 [docs/README.md](docs/README.md)。
+
+- [GEOMETRY.md](GEOMETRY.md) —— 几何建模/内核开发者轨道（失效本体 → Parasolid 对照 → 缺陷导出 → LLDB 捕获）。
+- [AGENT.md](AGENT.md) —— Agent/Harness/Eval 工程师轨道（架构图 → 契约 → 决策回路 → eval）。
+- [docs/dependencies.md](docs/dependencies.md) —— **依赖唯一权威源**：fork 钉板 / 构建链 / 运行时链 / 升级影响。
+- [agent/README.md](agent/README.md) —— agent 总览与快速开始；[agent/docs/progress.md](agent/docs/progress.md) —— 路线图 / 进度档案。
+- [tools/occ-debug-mesh/README.md](tools/occ-debug-mesh/README.md) —— 缺陷导出 CLI 的设计说明 / 交接文档（夹具、输出格式、决策表）。
+- [docs/occ-fillet-debug-agent-architecture.md](docs/occ-fillet-debug-agent-architecture.md) —— 系统级架构（采集/埋点/agent/viewer 协作）。
+- [docs/lldb-dynamic-geometry-capture.md](docs/lldb-dynamic-geometry-capture.md) —— 断点内活几何捕获。
+- [docs/vscode-build-and-pixi.md](docs/vscode-build-and-pixi.md) / [docs/occt-debugging.md](docs/occt-debugging.md) / [docs/vscode-debug-breakpoints.md](docs/vscode-debug-breakpoints.md) —— 环境 / 调试工作流。
